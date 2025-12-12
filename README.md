@@ -198,31 +198,6 @@ python src/data/build_pyg_dataset.py \
 
 Artifacts are stored next to the dataset (metrics JSON, training curves, link AUC/AP). Repeat with `configs/generator_baseline.json` or `configs/generator_hard.json` to sweep difficulty.
 
-## 🧪 Smoke Tests & CI
-- Run a minimal end-to-end pipeline (generator → PyG dataset) to catch regressions quickly:
-  ```bash
-  pytest tests/test_smoke_pipeline.py::test_generate_and_build_pyg_roundtrip
-  ```
-- This uses a small graph (120 nodes) and exercises v2 generator defaults, data conversion, masks, and tensor outputs. It is safe to run locally or in CI as a lightweight sanity check.
-
-## 🗂️ Results & Logging Conventions
-- Recommended layout for experiment outputs:
-  ```text
-  results/
-    <difficulty>/          # easy | baseline | hard
-      multitask/           # multi-task encoder runs
-        <run_name>/
-          metrics.json     # loss/accuracy/F1 per split
-          curves.png       # optional training curves
-      linkpred_finance/
-        <run_name>/        # finance layer link prediction
-          metrics.json
-      linkpred_comm/
-        <run_name>/        # communication layer link prediction
-          metrics.json
-  ```
-- When launching training scripts, set `--output_dir` or similar arguments to follow this structure so runs remain comparable across difficulty levels and model types.
-
 ## 📊 Example Results (Summary)
 Reference runs from `results/summary_all/multitask_linkpred_summary.csv`:
 
