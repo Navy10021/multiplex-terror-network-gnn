@@ -2,6 +2,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 
 # Ensure repository root is on the path for src imports
@@ -11,6 +12,14 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.data.multiplex_generator_v2 import GeneratorConfig, generate_multiplex_with_config
 from src.data.build_pyg_dataset import build_pyg_data
+
+
+def _write_manifest(tmp_path: Path, cfg: GeneratorConfig) -> Path:
+    manifest = generate_multiplex_with_config(cfg)
+    manifest_path = tmp_path / "multiplex.json"
+    with manifest_path.open("w") as f:
+        json.dump(manifest, f)
+    return manifest_path
 
 
 def test_generate_and_build_pyg_roundtrip(tmp_path: Path):
@@ -25,10 +34,7 @@ def test_generate_and_build_pyg_roundtrip(tmp_path: Path):
         op_cell_size=3,
     )
 
-    manifest = generate_multiplex_with_config(cfg)
-    manifest_path = tmp_path / "multiplex.json"
-    with manifest_path.open("w") as f:
-        json.dump(manifest, f)
+    manifest_path = _write_manifest(tmp_path, cfg)
 
     data = build_pyg_data(
         manifest_path=str(manifest_path),
@@ -68,3 +74,34 @@ def test_generate_and_build_pyg_roundtrip(tmp_path: Path):
     assert isinstance(data.edge_type, torch.Tensor)
     assert isinstance(data.edge_attr, torch.Tensor)
     assert isinstance(data.importance_score, torch.Tensor)
+
+
+def test_invalid_split_ratios_raise(tmp_path: Path):
+    cfg = GeneratorConfig(
+        size=60,
+        seed=7,
+        finance_structure_strength=0.7,
+        comm_structure_strength=0.7,
+        comm_randomness=0.2,
+        hvt_ratio=0.05,
+        op_num_cells=5,
+        op_cell_size=3,
+    )
+
+    manifest_path = _write_manifest(tmp_path, cfg)
+
+    with pytest.raises(ValueError):
+        build_pyg_data(
+            manifest_path=str(manifest_path),
+            train_ratio=0.5,
+            val_ratio=0.6,
+            test_ratio=0.1,
+        )
+
+    with pytest.raises(ValueError):
+        build_pyg_data(
+            manifest_path=str(manifest_path),
+            train_ratio=0.8,
+            val_ratio=0.1,
+            test_ratio=-0.1,
+        )
