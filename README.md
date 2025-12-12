@@ -327,20 +327,29 @@ This uses a small graph (120 nodes) and exercises:
 
 ## 🔒 Ethical Considerations
 
-This repository is built with **defensive, academic purposes** in mind:
+This repository is designed for **defensive, lawful counter-terrorism (CT)** research—specifically for studying **multiplex network disruption**, **risk analysis**, and **resilience planning** in a controlled, reproducible setting.
 
-- ✅ **Synthetic Data Only**  
-  All networks are generated synthetically. No real persons, organizations, or operational data are used.
-- ✅ **Counter-Terrorism & Lawful Use**  
-  Intended for legitimate research in **counter-terrorism**, **criminal network analysis**, and **resilience planning**.
-- ✅ **Transparency & Reproducibility**  
-  Open code for peer review and academic scrutiny.
+### ✅ Intended Use
+- **Synthetic Data Only**  
+  All networks are **100% synthetic** and created solely for experimentation. No real persons, organizations, communications, or operational datasets are included or required.
+- **Counter-Terrorism / Criminal Network Analysis (Defensive)**  
+  Intended for legitimate research such as **HVT prioritization methods (research only)**, **critical-node disruption simulation**, **risk scoring**, and **robustness evaluation** under noise and partial observability.
+- **Transparency & Reproducibility**  
+  Implementations and experiments are provided to support peer review, benchmarking, and methodological comparison.
 
-**Do NOT use this code to:**
-- Target legitimate political groups or civil organizations,
-- Conduct unauthorized surveillance,
-- Suppress lawful protest, free speech, or assembly,
-- Analyze real social networks without proper legal and ethical oversight.
+### 🚫 Prohibited Use
+Do **NOT** use this codebase to:
+- Conduct or support **operational targeting** of real individuals or groups.
+- Perform **unauthorized surveillance**, doxxing, or collection/analysis of real social network data without explicit legal authority and ethical approval.
+- **Target or suppress** legitimate political groups, civil society organizations, journalists, activists, or lawful protest.
+- Enable discrimination, harassment, intimidation, or violations of privacy, due process, or human rights.
+
+### 🧾 Governance Guidance (If You Use Real Data Elsewhere)
+If adapting ideas from this repo to any real-world context, you are responsible for:
+- Obtaining appropriate **legal authorization**, **ethics/IRB review**, and **data governance approvals**.
+- Applying **minimization**, **access control**, **audit logging**, and **security controls** to protect sensitive data.
+- Ensuring outputs are used for **defensive decision support**, with human oversight and accountability.
+
 
 ---
 
