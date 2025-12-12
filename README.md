@@ -19,8 +19,7 @@ Synthetic multiplex terrorist networks and multi-task GNNs for high-value target
   - `easy` / `baseline` / `hard` (controlled structural noise & randomness)
 - All experiments are fully reproducible via small command-line scripts.
 
-한국어 한 줄 요약:  
-5레이어 멀티플렉스 테러 네트워크를 합성하고, HVT 탐지·역할 분류·링크 예측을 위한 멀티태스크 GNN 실험 코드를 제공합니다.
+- **One-line summary**: Generate 5-layer multiplex terrorist networks and train multi-task GNN baselines for HVT detection, role classification, and link prediction.
 
 ---
 
@@ -166,14 +165,94 @@ pip install -r requirements.txt
 ```
 
 ## 🚀 Quick Start
+End-to-end in three steps (works for `easy`, `baseline`, or `hard`).
+
+1) **Generate a multiplex graph**
+```bash
+python src/data/multiplex_generator_v2.py \
+  --config configs/generator_easy.json \
+  --out_dir data/multiplex_easy
+```
+
+2) **Convert to a PyG dataset**
+```bash
+python src/data/build_pyg_dataset.py \
+  --manifest data/multiplex_easy/multiplex.json \
+  --out_path data/multiplex_easy/pyg_data.pt
+```
+
+3) **Train models**
+- Multi-task HVT + role + importance
+  ```bash
+  python src/models/train_multitask_gnn.py \
+    --data_path data/multiplex_easy/pyg_data.pt \
+    --hidden_dim 128 --num_layers 3 --epochs 300
+  ```
+- Layer-wise link prediction (finance or communication) with hard-negative sampling
+  ```bash
+  python src/models/train_linkpred_layer.py \
+    --data_path data/multiplex_easy/pyg_data.pt \
+    --layer finance --neg_mode hard_region --epochs 200
+  ```
+
+Artifacts are stored next to the dataset (metrics JSON, training curves, link AUC/AP). Repeat with `configs/generator_baseline.json` or `configs/generator_hard.json` to sweep difficulty.
+
+## 🧪 Smoke Tests & CI
+- Run a minimal end-to-end pipeline (generator → PyG dataset) to catch regressions quickly:
+  ```bash
+  pytest tests/test_smoke_pipeline.py::test_generate_and_build_pyg_roundtrip
+  ```
+- This uses a small graph (120 nodes) and exercises v2 generator defaults, data conversion, masks, and tensor outputs. It is safe to run locally or in CI as a lightweight sanity check.
+
+## 🗂️ Results & Logging Conventions
+- Recommended layout for experiment outputs:
+  ```text
+  results/
+    <difficulty>/          # easy | baseline | hard
+      multitask/           # multi-task encoder runs
+        <run_name>/
+          metrics.json     # loss/accuracy/F1 per split
+          curves.png       # optional training curves
+      linkpred_finance/
+        <run_name>/        # finance layer link prediction
+          metrics.json
+      linkpred_comm/
+        <run_name>/        # communication layer link prediction
+          metrics.json
+  ```
+- When launching training scripts, set `--output_dir` or similar arguments to follow this structure so runs remain comparable across difficulty levels and model types.
 
 ## 📊 Example Results (Summary)
+Reference runs from `results/summary_all/multitask_linkpred_summary.csv`:
+
+| Difficulty | HVT F1 | HVT AUC | Role F1 (macro) | Importance R² | Finance AUC (uniform) | Communication AUC (uniform) |
+| --- | --- | --- | --- | --- | --- | --- |
+| easy | 0.25 | 0.893 | 0.575 | 0.551 | 0.981 | 0.864 |
+| baseline | 0.50 | 0.918 | 0.280 | 0.331 | 0.980 | 0.864 |
+| hard | 0.286 | 0.886 | 0.188 | 0.172 | 0.970 | 0.796 |
+
+- Role F1 and importance R² degrade noticeably under the `hard` setting, while link prediction AUC stays robust—useful for stress-testing models against structural noise.
 
 ## 🛠️ Extending the Framework
 
+- **Custom difficulty:** copy a config under `configs/` and tweak `finance_structure_strength`, `comm_structure_strength`, `comm_randomness`, and `hvt_ratio`. Pass it via `--config` to `multiplex_generator_v2.py`.
+- **New node/edge features:** extend `generate_multiplex_with_config` in `src/data/multiplex_generator_v2.py` and ensure they are preserved in `build_pyg_dataset.py`.
+- **Model variants:**
+  - Add heads or encoders in `src/models/train_multitask_gnn.py` for alternative loss balancing or architectures.
+  - Swap decoders or negative sampling in `src/models/train_linkpred_layer.py` to test other link-prediction strategies.
+- **Reporting:** regenerate summary plots with `src/analysis/plot_multitask_linkpred_summary.py` after adding new runs.
+
 ## 📜 License
 
+No explicit license is provided yet. For usage beyond personal or academic experimentation, please contact the maintainer.
+
 ## 📚 Citation
+
+If you use this codebase in research, please cite the repository (or open an issue for a formal BibTeX entry):
+
+```
+Yunseob, I. (2024). Multiplex Terror Network GNN (GitHub repository). https://github.com/Navy10021/multiplex-terror-network-gnn
+```
 
 ## 📬 Contact
 For questions, issues, or collaboration:

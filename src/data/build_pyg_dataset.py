@@ -1,21 +1,21 @@
 """
 ./data/build_pyg_dataset.py
 
-multiplex_generator.py가 만든 synthetic terror multiplex 데이터를
-PyTorch Geometric Data 객체로 변환하는 스크립트.
+Convert synthetic terror multiplex data produced by multiplex_generator.py
+into a PyTorch Geometric Data object.
 
-생성되는 것:
-  - 단일 homogeneous 그래프 Data:
-      * x           : [num_nodes, num_features] 노드 피처
-      * edge_index  : [2, num_edges] (모든 레이어 edge를 concat)
+Outputs:
+  - Single homogeneous graph Data:
+      * x           : [num_nodes, num_features] node features
+      * edge_index  : [2, num_edges] (concatenated edges from all layers)
       * edge_type   : [num_edges] (0=hier, 1=finance, 2=comm, 3=ops, 4=ideo)
-      * edge_attr   : [num_edges, 1] (레이어별 의미 다른 weight: amount, similarity 등)
-      * y_role      : [num_nodes] (int, 역할 클래스 인덱스)
+      * edge_attr   : [num_edges, 1] (layer-specific scalar weight: amount, similarity, etc.)
+      * y_role      : [num_nodes] (int, role class index)
       * y_hvt       : [num_nodes] (int, 0/1 high_value_target)
-      * train_mask / val_mask / test_mask : [num_nodes] boolean mask
-      * node_id     : list[str], 원본 노드 ID (Data에 그대로 넣어둠)
+      * train_mask / val_mask / test_mask : [num_nodes] boolean masks
+      * node_id     : list[str], original node IDs stored directly on the Data object
 
-사용 예 (Colab):
+Example (Colab):
   !python data/build_pyg_dataset.py \
       --manifest ./data/multiplex_v1_1/multiplex.json \
       --out_path ./data/multiplex_v1_1/pyg_data.pt
@@ -35,14 +35,14 @@ from torch_geometric.data import Data
 
 
 # -----------------------------
-# 유틸 함수
+# Utility functions
 # -----------------------------
 
 def load_multiplex(manifest_path: str):
     """
-    multiplex.json 포맷을 v1 / v2 둘 다 지원하는 로더.
+    Loader that supports both v1 and v2 multiplex.json formats.
 
-    v1 포맷 (기존):
+    v1 format (legacy):
       {
         "nodes": "nodes.csv",
         "labels": "labels.csv",
@@ -53,15 +53,15 @@ def load_multiplex(manifest_path: str):
         }
       }
 
-    v2 포맷 (multiplex_generator_v2.py 가 생성하는 형태 예시):
+    v2 format (example produced by multiplex_generator_v2.py):
       {
-        "nodes": [ { ... }, { ... }, ... ],      # 노드 정보가 JSON 리스트로 인라인 저장
+        "nodes": [ { ... }, { ... }, ... ],      # node info inline as a JSON list
         "layers": {
           "hierarchy": { "directed": true,  "edges": [ {...}, ... ] },
           "finance":   { "directed": false, "edges": [ {...}, ... ] },
           ...
         },
-        "events": [ ... ],   # (있을 수도 있음, PyG 변환에서는 사용 X)
+        "events": [ ... ],   # may or may not exist (not used in PyG conversion)
         ...
       }
     """
@@ -69,39 +69,39 @@ def load_multiplex(manifest_path: str):
         mani = json.load(f)
 
     # --------------------------------------------------
-    # 1) nodes / labels 처리
+    # 1) handle nodes / labels
     # --------------------------------------------------
     nodes_raw = mani.get("nodes")
 
-    # (A) v1 스타일: CSV 경로 문자열
+    # (A) v1 style: CSV path string
     if isinstance(nodes_raw, str):
-        # 기존 코드와 동일하게 처리
+        # same handling as original code
         nodes = pd.read_csv(nodes_raw)
         labels_path = mani.get("labels")
         if labels_path is None:
-            raise ValueError("v1 포맷에서는 'labels'에 CSV 경로가 있어야 합니다.")
+            raise ValueError("v1 format requires 'labels' to provide a CSV path.")
         labels = pd.read_csv(labels_path)
 
-    # (B) v2 스타일: 노드 정보가 리스트(JSON 인라인)
+    # (B) v2 style: node information inline as a JSON list
     elif isinstance(nodes_raw, list):
         df_nodes = pd.DataFrame(nodes_raw)
 
-        # id / node_id 정규화
+        # normalize id / node_id
         if "node_id" in df_nodes.columns:
             pass
         elif "id" in df_nodes.columns:
             df_nodes = df_nodes.rename(columns={"id": "node_id"})
         else:
-            raise ValueError("nodes 객체에 'id' 또는 'node_id' 컬럼이 필요합니다.")
+            raise ValueError("'nodes' must include an 'id' or 'node_id' column.")
 
-        # 최소 필수 컬럼 체크 (v1에서 merge에 사용) :contentReference[oaicite:2]{index=2}
+        # minimum required columns (used for v1 merge compatibility)
         for col in ["node_id", "role", "region", "group"]:
             if col not in df_nodes.columns:
-                raise ValueError(f"nodes에 필수 컬럼 '{col}' 이(가) 없습니다.")
+                raise ValueError(f"Required column '{col}' missing in nodes.")
 
-        # v2에서는 skill_level, radicalization, past_incidents, importance_score,
-        # high_value_target 이 이미 nodes 안에 들어있을 가능성이 높음.
-        # 없을 경우 기본값으로 채워서라도 빌드 가능하게 함.
+        # v2 likely already includes skill_level, radicalization, past_incidents,
+        # importance_score, high_value_target in the nodes list.
+        # Fill with defaults if any are missing so conversion still works.
         if "skill_level" not in df_nodes.columns:
             df_nodes["skill_level"] = 0.0
         if "radicalization" not in df_nodes.columns:
@@ -113,7 +113,7 @@ def load_multiplex(manifest_path: str):
         if "high_value_target" not in df_nodes.columns:
             df_nodes["high_value_target"] = 0
 
-        # v1의 nodes.csv / labels.csv 구조를 흉내 내서 분리
+        # mimic the v1 nodes.csv / labels.csv split
         nodes = df_nodes[["node_id", "role", "region", "group"]].copy()
         labels = df_nodes[
             [
@@ -130,39 +130,51 @@ def load_multiplex(manifest_path: str):
         ].copy()
 
     else:
-        raise ValueError(f"'nodes' 필드 타입을 알 수 없습니다: {type(nodes_raw)}")
+        raise ValueError(f"Unrecognized type for 'nodes' field: {type(nodes_raw)}")
 
     # --------------------------------------------------
-    # 2) layers 처리
+    # 2) handle layers
     # --------------------------------------------------
     layers: Dict[str, pd.DataFrame] = {}
     raw_layers = mani.get("layers", {})
 
     for layer_name, layer_obj in raw_layers.items():
-        # (A) v1 스타일: CSV 경로 문자열
+        # (A) v1 style: CSV path string
         if isinstance(layer_obj, str):
             layers[layer_name] = pd.read_csv(layer_obj)
 
-        # (B) v2 스타일: {"directed": bool, "edges": [ {...}, ... ]}
+        # (B) v2 style: {"directed": bool, "edges": [ {...}, ... ]}
         elif isinstance(layer_obj, dict) and "edges" in layer_obj:
             df_layer = pd.DataFrame(layer_obj["edges"])
 
-            # build_pyg_dataset 은 각 레이어별로 최소한 source / target 을 기대 :contentReference[oaicite:3]{index=3}
+            # build_pyg_dataset expects at least source/target for each layer
             if "source" not in df_layer.columns or "target" not in df_layer.columns:
                 raise ValueError(
-                    f"레이어 '{layer_name}' 에 'source', 'target' 컬럼이 필요합니다."
+                    f"Layer '{layer_name}' requires 'source' and 'target' columns."
                 )
 
-            # amount / num_events / joint_ops / similarity 는 있으면 그대로 사용,
-            # 없으면 나중에 build_pyg_data() 에서 get("...", 1.0) 으로 처리됨.
+            # amount / num_events / joint_ops / similarity are used if present;
+            # otherwise build_pyg_data() falls back to get("...", 1.0).
             layers[layer_name] = df_layer
 
         else:
             raise ValueError(
-                f"레이어 '{layer_name}' 형식을 인식할 수 없습니다: {type(layer_obj)}"
+                f"Unrecognized layer format for '{layer_name}': {type(layer_obj)}"
             )
 
     return mani, nodes, labels, layers
+
+
+def validate_split_ratios(train_ratio: float, val_ratio: float, test_ratio: float, tol: float = 1e-6) -> None:
+    """Validate that the provided split ratios are non-negative and sum to 1.0."""
+
+    ratios = [train_ratio, val_ratio, test_ratio]
+    if any(r < 0 for r in ratios):
+        raise ValueError("train/val/test ratios must be non-negative.")
+
+    total = train_ratio + val_ratio + test_ratio
+    if abs(total - 1.0) > tol:
+        raise ValueError("train/val/test ratios must sum to 1.0.")
 
 
 
@@ -170,8 +182,8 @@ def encode_categorical(
     series: pd.Series,
 ) -> Tuple[np.ndarray, Dict[str, int]]:
     """
-    범주형 시리즈를 0..C-1 인덱스로 인코딩하고,
-    (index_array, mapping) 반환.
+    Encode a categorical series into 0..C-1 indices and
+    return (index_array, mapping).
     """
     uniques = sorted(series.unique().tolist())
     mapping = {v: i for i, v in enumerate(uniques)}
@@ -186,7 +198,7 @@ def one_hot(indices: np.ndarray, num_classes: int) -> np.ndarray:
 
 
 # -----------------------------
-# 메인 변환 로직
+# Main conversion logic
 # -----------------------------
 
 
@@ -197,41 +209,40 @@ def build_pyg_data(
     test_ratio: float = 0.15,
 ) -> Data:
     """
-    multiplex.json을 읽어서 PyG Data를 구성.
+    Read multiplex.json and construct PyG Data.
     """
-    assert abs(train_ratio + val_ratio - 1.0) > 1e-6 or test_ratio >= 0, \
-        "train/val/test 비율을 명시적으로 넣어주세요."
+    validate_split_ratios(train_ratio, val_ratio, test_ratio)
 
     mani, nodes, labels, layers = load_multiplex(manifest_path)
 
     # -------------------------
-    # 1. 노드 인덱스 매핑
+    # 1. node index mapping
     # -------------------------
     node_ids = nodes["node_id"].tolist()
     num_nodes = len(node_ids)
     node2idx = {nid: i for i, nid in enumerate(node_ids)}
 
-    # labels.csv를 nodes와 merge해서 role/region/group/importance_score/hvt 정리
+    # merge labels.csv with nodes to consolidate role/region/group/importance_score/hvt
     df = nodes.merge(labels, on=["node_id", "role", "region", "group"], how="left")
 
 
     # -------------------------
-    # 2. 노드 피처 구성
-    #    - 범주형: region, group → one-hot  (role은 label로만 사용)
-    #    - 연속형: skill_level, radicalization, past_incidents
+    # 2. build node features
+    #    - categorical: region, group → one-hot  (role is used only as a label)
+    #    - continuous: skill_level, radicalization, past_incidents
     # -------------------------
     role_idx, role_map = encode_categorical(df["role"])
     region_idx, region_map = encode_categorical(df["region"])
     group_idx, group_map = encode_categorical(df["group"])
 
-    # role_oh = one_hot(role_idx, len(role_map))  # <- 더 이상 x에 포함하지 않음
+    # role_oh = one_hot(role_idx, len(role_map))  # <- no longer included in x
     region_oh = one_hot(region_idx, len(region_map))
     group_oh = one_hot(group_idx, len(group_map))
 
     cont_cols = ["skill_level", "radicalization", "past_incidents"]
     for col in cont_cols:
         if col not in df.columns:
-            raise ValueError(f"연속형 피처 컬럼 {col} 이(가) DataFrame에 없습니다.")
+            raise ValueError(f"Continuous feature column {col} is missing in the DataFrame.")
 
     
     cont_feats = df[cont_cols].to_numpy(dtype=np.float32)
@@ -244,17 +255,17 @@ def build_pyg_data(
 
 
     # -------------------------
-    # 3. 라벨 구성
-    #    - y_role: 역할 인덱스
+    # 3. build labels
+    #    - y_role: role index
     #    - y_hvt: high_value_target (0/1)
     # -------------------------
     y_role = torch.from_numpy(role_idx.astype(np.int64))          # [num_nodes]
     y_hvt = torch.from_numpy(df["high_value_target"].astype(np.int64).to_numpy())
 
     # -------------------------
-    # 4. edge_index / edge_type / edge_attr 구성
+    # 4. construct edge_index / edge_type / edge_attr
     # -------------------------
-    # layer 이름 → 타입 인덱스 매핑
+    # map layer name to type index
     layer_type_map = {
         "hierarchy": 0,
         "finance": 1,
@@ -290,21 +301,21 @@ def build_pyg_data(
             edge_dst.append(vi)
             edge_type_list.append(ltype)
 
-            # edge_attr: 레이어별로 의미 있는 scalar weight 하나를 선택
+            # edge_attr: choose a meaningful scalar weight per layer
             if layer_name == "hierarchy":
-                # relation(superior/informal)를 굳이 숫자로 encode하지 않고 1.0으로 둠
+                # keep relation(superior/informal) as 1.0 instead of encoding
                 w = 1.0
             elif layer_name == "finance":
-                # amount 사용
+                # use amount
                 w = float(row.get("amount", 1.0))
             elif layer_name == "communication":
-                # num_events 사용
+                # use num_events
                 w = float(row.get("num_events", 1.0))
             elif layer_name == "operation":
-                # joint_ops 사용
+                # use joint_ops
                 w = float(row.get("joint_ops", 1.0))
             elif layer_name == "ideology":
-                # similarity 사용
+                # use similarity
                 w = float(row.get("similarity", 1.0))
             else:
                 w = 1.0
@@ -323,7 +334,7 @@ def build_pyg_data(
     edge_attr = torch.tensor(edge_attr_vals, dtype=torch.float32).view(-1, 1)  # [num_edges, 1]
 
     # -------------------------
-    # 5. train/val/test mask 생성 (노드 단위)
+    # 5. create train/val/test masks (node-level)
     # -------------------------
     num_nodes = x.size(0)
     perm = torch.randperm(num_nodes)
@@ -344,22 +355,22 @@ def build_pyg_data(
     val_mask[val_idx] = True
     test_mask[test_idx] = True
 
-    # importance_score train 통계 (mean/std)
+    # importance_score train statistics (mean/std)
     imp_np = df["importance_score"].to_numpy(dtype=np.float32)
-    # train_idx는 torch.Tensor이므로 numpy 인덱싱용으로 변환
+    # convert train_idx tensor to numpy-compatible indexing
     train_idx_np = train_idx.cpu().numpy() if hasattr(train_idx, "cpu") else train_idx.numpy()
     imp_train = imp_np[train_idx_np]
     if imp_train.size > 0:
         imp_mean = float(imp_train.mean())
         imp_std = float(imp_train.std())
     else:
-        # 혹시라도 train이 비어 있는 극단 상황에서는 전체 통계 사용
+        # fallback to global stats if train is unexpectedly empty
         imp_mean = float(imp_np.mean())
         imp_std = float(imp_np.std())
     print(f"[*] importance_score train mean={imp_mean:.3f}, std={imp_std:.3f}")
 
     # -------------------------
-    # 6. Data 객체 구성
+    # 6. assemble Data object
     # -------------------------
     data = Data(
         x=x,
@@ -374,18 +385,18 @@ def build_pyg_data(
     )
 
 
-    # 원본 node_id / mapping / importance_score 등 메타 정보 추가
+    # attach metadata such as original node_id / mappings / importance_score
     data.node_id = node_ids
     data.role_mapping = role_map
     data.region_mapping = region_map
     data.group_mapping = group_map
     data.layer_type_mapping = layer_type_map
 
-    # importance_score 텐서 추가 (float32)
+    # add importance_score tensor (float32)
     data.importance_score = torch.from_numpy(
         df["importance_score"].to_numpy(dtype=np.float32)
     )
-    # importance_score train 통계 (mean/std) 메타 정보 저장
+    # store importance_score train statistics (mean/std) as metadata
     data.imp_mean = float(imp_mean)
     data.imp_std = float(imp_std)
 
