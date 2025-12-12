@@ -177,6 +177,18 @@ def validate_split_ratios(train_ratio: float, val_ratio: float, test_ratio: floa
         raise ValueError("train/val/test ratios must sum to 1.0.")
 
 
+def validate_split_ratios(train_ratio: float, val_ratio: float, test_ratio: float, tol: float = 1e-6) -> None:
+    """Validate that the provided split ratios are non-negative and sum to 1.0."""
+
+    ratios = [train_ratio, val_ratio, test_ratio]
+    if any(r < 0 for r in ratios):
+        raise ValueError("train/val/test ratios must be non-negative.")
+
+    total = train_ratio + val_ratio + test_ratio
+    if abs(total - 1.0) > tol:
+        raise ValueError("train/val/test ratios must sum to 1.0.")
+
+
 
 def encode_categorical(
     series: pd.Series,
