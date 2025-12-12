@@ -15,10 +15,12 @@
 
 ---
 
-> **Disclaimer**
+> **Disclaimer (Defensive & Counter-Terrorism Use Only)**
 >
-> This repository uses **purely synthetic** networks to study algorithms for disruption and risk analysis.
-> **No real individuals, organizations, or operational data** are used.
+> This project is intended for **defensive, lawful counter-terrorism research**—including **disruption strategy evaluation**, **risk scoring**, and **resilience planning** on multiplex networks.
+> The data are **100% synthetic**. The code is **not designed or intended for operational targeting** or analysis of real-world social networks.
+> **No real persons, organizations, communications, or operational datasets** are used or included.
+
 
 ## 🔍 TL;DR
 
