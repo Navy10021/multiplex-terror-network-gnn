@@ -15,11 +15,11 @@
 
 ---
 
-> **Disclaimer (Defensive & Counter-Terrorism Use Only)**
+> **Purpose & Safety Notice (Defensive CT Research Only)**
 >
-> This project is intended for **defensive, lawful counter-terrorism research**—including **disruption strategy evaluation**, **risk scoring**, and **resilience planning** on multiplex networks.
-> The data are **100% synthetic**. The code is **not designed or intended for operational targeting** or analysis of real-world social networks.
-> **No real persons, organizations, communications, or operational datasets** are used or included.
+> This repository is intended for **defensive, lawful counter-terrorism (CT)** and **criminal-network analysis** research—e.g., **disruption strategy evaluation**, **risk scoring**, and **resilience planning** on multiplex networks.
+> All data are **100% synthetic**. This code is **not** intended for **operational targeting**, **real-world surveillance**, or analysis of real social networks.
+> See **[Ethical Considerations](#-ethical-considerations)** for allowed and prohibited uses.
 
 
 ## 🔍 TL;DR
@@ -209,7 +209,7 @@ Repeat with `configs/generator_easy.json` or `configs/generator_hard.json` to sw
 
 This repo supports an optional notebook workflow for rapid prototyping, visualization, and debugging.
 A Jupyter notebook is provided (e.g., ./notebooks/multiplex-terror-network-gnn.ipynb) that:
-- Generates complex terrorist networks data
+- Generates configurable synthetic multiplex network data
 - GNN-based model training and evaluation
 - Visualizes and interprets results
 
@@ -327,15 +327,15 @@ This uses a small graph (120 nodes) and exercises:
 
 ## 🔒 Ethical Considerations
 
-This repository is designed for **defensive, lawful counter-terrorism (CT)** research—specifically for studying **multiplex network disruption**, **risk analysis**, and **resilience planning** in a controlled, reproducible setting.
+This repository is provided for **defensive and lawful research** only. The following principles apply.
 
-### ✅ Intended Use
+### ✅ Allowed Use
 - **Synthetic Data Only**  
   All networks are **100% synthetic** and created solely for experimentation. No real persons, organizations, communications, or operational datasets are included or required.
-- **Counter-Terrorism / Criminal Network Analysis (Defensive)**  
-  Intended for legitimate research such as **HVT prioritization methods (research only)**, **critical-node disruption simulation**, **risk scoring**, and **robustness evaluation** under noise and partial observability.
+- **Defensive CT / Criminal Network Research**  
+  Appropriate use includes **method development**, **benchmarking**, and **robustness studies** (e.g., disruption simulation, HVT scoring as a research task, and resilience analysis under noise/partial observability).
 - **Transparency & Reproducibility**  
-  Implementations and experiments are provided to support peer review, benchmarking, and methodological comparison.
+  The code is intended to support peer review and methodological comparison.
 
 ### 🚫 Prohibited Use
 Do **NOT** use this codebase to:
@@ -345,7 +345,7 @@ Do **NOT** use this codebase to:
 - Enable discrimination, harassment, intimidation, or violations of privacy, due process, or human rights.
 
 ### 🧾 Governance Guidance (If You Use Real Data Elsewhere)
-If adapting ideas from this repo to any real-world context, you are responsible for:
+If you adapt ideas from this repo to any real-world context, you are responsible for:
 - Obtaining appropriate **legal authorization**, **ethics/IRB review**, and **data governance approvals**.
 - Applying **minimization**, **access control**, **audit logging**, and **security controls** to protect sensitive data.
 - Ensuring outputs are used for **defensive decision support**, with human oversight and accountability.
