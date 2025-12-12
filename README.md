@@ -202,6 +202,17 @@ python src/models/train_linkpred_layer.py \
 
 Repeat with `configs/generator_easy.json` or `configs/generator_hard.json` to sweep difficulty.
 
+
+## 🧪 Jupyter Notebook (Optional)
+
+This repo supports an optional notebook workflow for rapid prototyping, visualization, and debugging.
+A Jupyter notebook is provided (e.g., ./notebooks/multiplex-terror-network-gnn.ipynb) that:
+- Generates complex terrorist networks data
+- GNN-based model training and evaluation
+- Visualizes and interprets results
+
+Open it in VSCode or JupyterLab and adapt cells to your scenario.
+
 ---
 
 ## 🗂️ Outputs
