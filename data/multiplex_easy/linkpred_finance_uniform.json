@@ -1,0 +1,17 @@
+{
+  "task": "linkpred",
+  "layer": "finance",
+  "neg_mode": "uniform",
+  "data_path": "data/multiplex_easy/pyg_data.pt",
+  "seed": 2025,
+  "hidden_dim": 64,
+  "num_layers": 2,
+  "dropout": 0.3,
+  "lr": 0.001,
+  "weight_decay": 0.0001,
+  "best_val_auc": 0.9934375,
+  "test_at_best_val_auc": {
+    "auc": 0.980546875,
+    "ap": 0.9600135656480472
+  }
+}
