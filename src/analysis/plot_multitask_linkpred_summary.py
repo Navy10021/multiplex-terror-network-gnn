@@ -10,8 +10,8 @@ import matplotlib.pyplot as plt
 
 def safe_get(d: Dict[str, Any], *keys, default=None):
     """
-    중첩 dict에서 안전하게 값을 꺼내는 헬퍼.
-    키가 없으면 default 반환.
+    Helper to safely retrieve values from nested dictionaries.
+    Returns default if any key is missing.
     """
     cur = d
     for k in keys:
@@ -25,10 +25,9 @@ def safe_get(d: Dict[str, Any], *keys, default=None):
 
 def load_multitask_metrics(run_dir: str) -> Dict[str, Any]:
     """
-    run_dir 안의 multitask_metrics.json을 읽어서,
-    HVT/Role/Importance의 주요 테스트 성능을 추출.
-    - HVT: threshold 튜닝(hvt_threshold_tuned)의 test f1/auc
-    - Role/Importance: fixed_threshold.test 기준
+    Load multitask_metrics.json in run_dir and extract key test metrics.
+    - HVT: tuned threshold (hvt_threshold_tuned) test f1/auc
+    - Role/Importance: fixed_threshold.test values
     """
     mt_path = os.path.join(run_dir, "multitask_metrics.json")
     if not os.path.exists(mt_path):
@@ -38,12 +37,12 @@ def load_multitask_metrics(run_dir: str) -> Dict[str, Any]:
     with open(mt_path, "r") as f:
         mt = json.load(f)
 
-    # 1) HVT: threshold 튜닝된 결과 (acc/f1/auc)
+    # 1) HVT: threshold-tuned results (acc/f1/auc)
     tuned_test = safe_get(mt, "hvt_threshold_tuned", "test", default={})
     hvt_f1 = tuned_test.get("f1", np.nan)
     hvt_auc = tuned_test.get("auc", np.nan)
 
-    # 2) Role / Importance: threshold=0.5 기준 멀티태스크 전체 지표
+    # 2) Role / Importance: multitask metrics at threshold=0.5
     fixed_test = safe_get(mt, "fixed_threshold", "test", default={})
     role_f1_macro = fixed_test.get("role_f1_macro", np.nan)
     imp_r2 = fixed_test.get("imp_r2", np.nan)
@@ -60,8 +59,8 @@ def load_multitask_metrics(run_dir: str) -> Dict[str, Any]:
 
 def load_linkpred_metrics(run_dir: str, layer: str, neg_mode: str) -> Dict[str, Any]:
     """
-    run_dir 안의 linkpred_{layer}_{neg_mode}.json을 읽어서
-    test_at_best_val_auc 의 AUC/AP를 추출.
+    Load linkpred_{layer}_{neg_mode}.json in run_dir and extract
+    test_at_best_val_auc AUC/AP.
     """
     fname = f"linkpred_{layer}_{neg_mode}.json"
     metrics_path = os.path.join(run_dir, fname)
@@ -89,9 +88,9 @@ def load_linkpred_metrics(run_dir: str, layer: str, neg_mode: str) -> Dict[str, 
 
 def load_generator_config(run_dir: str) -> Dict[str, Any]:
     """
-    run_dir 안의 multiplex.json(meta.config)을 읽어서 generator 설정 취득.
-    finance_structure_strength, comm_structure_strength, comm_randomness 등.
-    (없으면 NaN으로 채움)
+    Read multiplex.json(meta.config) in run_dir to capture generator settings
+    such as finance_structure_strength, comm_structure_strength, comm_randomness, etc.
+    Fill NaN when missing.
     """
     manifest_path = os.path.join(run_dir, "multiplex.json")
     if not os.path.exists(manifest_path):
@@ -117,8 +116,8 @@ def load_generator_config(run_dir: str) -> Dict[str, Any]:
 
 def infer_difficulty_label(run_name: str) -> str:
     """
-    폴더 이름에서 난이도 레이블 추론.
-    예: multiplex_easy / multiplex_baseline / multiplex_hard
+    Infer difficulty label from folder name.
+    Example: multiplex_easy / multiplex_baseline / multiplex_hard
     """
     name = run_name.lower()
     if "easy" in name:
@@ -127,13 +126,13 @@ def infer_difficulty_label(run_name: str) -> str:
         return "baseline"
     if "hard" in name:
         return "hard"
-    return run_name  # 별도 규칙 없으면 그대로 사용
+    return run_name  # keep as-is if no rule matches
 
 
 def difficulty_sort_key(label: str) -> int:
     """
-    난이도 정렬 순서 지정.
-    easy -> baseline -> hard -> 그 외
+    Define sorting order for difficulty labels.
+    easy -> baseline -> hard -> everything else
     """
     l = label.lower()
     if "easy" in l:
@@ -147,8 +146,8 @@ def difficulty_sort_key(label: str) -> int:
 
 def build_summary_dataframe(run_dirs: List[str]) -> pd.DataFrame:
     """
-    여러 run_dir에 대해 멀티태스크 + 링크예측 + 제너레이터 설정을
-    하나의 DataFrame으로 통합.
+    Combine multitask + link prediction metrics + generator settings
+    from multiple run directories into one DataFrame.
     """
     rows = []
 
@@ -162,7 +161,7 @@ def build_summary_dataframe(run_dirs: List[str]) -> pd.DataFrame:
         mt_metrics = load_multitask_metrics(run_dir)
         gen_cfg = load_generator_config(run_dir)
 
-        # layer × neg_mode 조합
+        # layer × neg_mode combinations
         lp_fin_uniform = load_linkpred_metrics(run_dir, layer="finance", neg_mode="uniform")
         lp_fin_hard = load_linkpred_metrics(run_dir, layer="finance", neg_mode="hard_region")
         lp_comm_uniform = load_linkpred_metrics(run_dir, layer="communication", neg_mode="uniform")
@@ -196,20 +195,20 @@ def build_summary_dataframe(run_dirs: List[str]) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
-    # 난이도 순서대로 정렬
+    # sort by difficulty order
     df["difficulty_order"] = df["difficulty"].apply(difficulty_sort_key)
     df = df.sort_values(["difficulty_order", "run_name"]).reset_index(drop=True)
     return df
 
 
 # --------------------------
-# Plot 함수들
+# Plot functions
 # --------------------------
 
 def plot_bar_hvt_metrics(df: pd.DataFrame, out_dir: str):
     """
-    난이도별 HVT F1 / HVT AUC / Role F1 / Importance R2 bar plot.
-    (1번 요구사항 – 간단한 bar plot 중심)
+    Bar plots for HVT F1 / HVT AUC / Role F1 / Importance R2 by difficulty.
+    (Requirement #1 – simple bar plots)
     """
     if df.empty:
         print("[!] Empty DataFrame, skip plot_bar_hvt_metrics")
@@ -269,8 +268,8 @@ def plot_bar_hvt_metrics(df: pd.DataFrame, out_dir: str):
 
 def plot_bar_linkpred_layer(df: pd.DataFrame, out_dir: str, layer: str):
     """
-    Finance / Communication 레이어 각각에 대해
-    uniform vs hard_region AUC를 grouped bar로 표시.
+    Grouped bar plot of uniform vs hard_region AUC for each layer
+    (Finance / Communication).
     """
     if df.empty:
         print("[!] Empty DataFrame, skip plot_bar_linkpred_layer")
@@ -309,11 +308,11 @@ def plot_bar_linkpred_layer(df: pd.DataFrame, out_dir: str, layer: str):
 
 def plot_difficulty_vs_performance_curve(df: pd.DataFrame, out_dir: str):
     """
-    2번 요구사항: 난이도(easy/baseline/hard)별로
+    Requirement #2: show the following across difficulty (easy/baseline/hard)
+    on a single line plot:
     - HVT F1
     - Finance link AUC (hard_region)
     - Communication link AUC (hard_region)
-    를 한 그래프에 곡선 형태로 표시.
     """
     if df.empty:
         print("[!] Empty DataFrame, skip plot_difficulty_vs_performance_curve")
@@ -347,13 +346,13 @@ def main():
         type=str,
         nargs="+",
         required=True,
-        help="실험 결과 폴더 경로들 (예: data/multiplex_easy data/multiplex_baseline data/multiplex_hard)",
+        help="Paths to experiment result folders (e.g., data/multiplex_easy data/multiplex_baseline data/multiplex_hard)",
     )
     parser.add_argument(
         "--out_dir",
         type=str,
         default=None,
-        help="결과 plot과 CSV를 저장할 디렉토리 (기본값: 첫 번째 run_dir)",
+        help="Directory to save plots and CSV (default: first run_dir)",
     )
 
     args = parser.parse_args()
@@ -364,23 +363,23 @@ def main():
         out_dir = os.path.abspath(args.out_dir)
     os.makedirs(out_dir, exist_ok=True)
 
-    # 1) 여러 run_dir에서 metrics를 모아 DataFrame 생성
+    # 1) aggregate metrics from multiple run_dirs into a DataFrame
     df = build_summary_dataframe(args.run_dirs)
     if df.empty:
         print("[!] No data loaded. Check run_dirs.")
         return
 
-    # CSV로 저장 (표 형태 결과)
+    # save as CSV (tabular results)
     csv_path = os.path.join(out_dir, "multitask_linkpred_summary.csv")
     df.to_csv(csv_path, index=False)
     print(f"[*] Saved summary CSV: {csv_path}")
 
-    # 1번: 간단한 bar plot (HVT/Role/Importance + layer별 link AUC)
+    # Requirement 1: bar plots (HVT/Role/Importance + layer-wise link AUC)
     plot_bar_hvt_metrics(df, out_dir)
     plot_bar_linkpred_layer(df, out_dir, layer="finance")
     plot_bar_linkpred_layer(df, out_dir, layer="communication")
 
-    # 2번: 난이도(easy/baseline/hard) vs 성능 곡선
+    # Requirement 2: difficulty (easy/baseline/hard) vs performance curves
     plot_difficulty_vs_performance_curve(df, out_dir)
 
 
