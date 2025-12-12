@@ -1,10 +1,22 @@
-# Multiplex Terror Network GNN
+<h1 align="center">Multiplex Terror Network GNN</h1>
 
-Synthetic multiplex terrorist networks and multi-task GNNs for high-value target (HVT) detection, role inference, and layer-aware link prediction.
+<p align="center">
+  <b>Synthetic multiplex terrorist networks</b> + <b>multi-task GNNs</b> for
+  <b>HVT detection</b>, <b>role inference</b>, and <b>layer-aware link prediction</b>.
+</p>
 
-> ⚠️ **Disclaimer**  
+<p align="center">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue" />
+  <img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-2.x-red" />
+  <img alt="PyG" src="https://img.shields.io/badge/PyG-2.x-7f3fbf" />
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-green" />
+</p>
+
+---
+
+> **Disclaimer**  
 > This repository uses **purely synthetic** data to study algorithms for network disruption and risk analysis.  
-> No real individuals, organizations, or operational data are used.
+> **No real individuals, organizations, or operational data** are used.
 
 ---
 
@@ -262,6 +274,7 @@ For questions, issues, or collaboration:
   - GitHub Issues: please open an issue in this repository.
   - Email: iyunseob4@gmail.com
 Contributions, bug reports, and ideas for new experiments are very welcome.
+
 
 
 
