@@ -1,0 +1,27 @@
+{
+  "size": 1500,
+  "seed": 2025,
+
+  "finance_avg_out_degree": 18.0,
+  "finance_w_group": 2.0,
+  "finance_w_region": 1.5,
+  "finance_w_ideo": 1.0,
+  "finance_w_tier_dist": 1.0,
+  "finance_base_bias": 0.1,
+  "finance_structure_strength": 1.0,
+
+  "comm_avg_degree": 3.5,
+  "comm_alpha0": 0.1,
+  "comm_alpha_group": 1.5,
+  "comm_alpha_region": 1.0,
+  "comm_alpha_hier": 1.5,
+  "comm_alpha_fin": 1.5,
+  "comm_structure_strength": 1.0,
+  "comm_randomness": 0.0,
+
+  "ideo_threshold": 0.2,
+  "op_num_cells": 20,
+  "op_cell_size": 4,
+
+  "hvt_ratio": 0.05
+}

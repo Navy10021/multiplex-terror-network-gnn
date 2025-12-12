@@ -1,0 +1,17 @@
+{
+  "task": "linkpred",
+  "layer": "communication",
+  "neg_mode": "uniform",
+  "data_path": "data/multiplex_baseline/pyg_data.pt",
+  "seed": 2025,
+  "hidden_dim": 64,
+  "num_layers": 2,
+  "dropout": 0.3,
+  "lr": 0.001,
+  "weight_decay": 0.0001,
+  "best_val_auc": 0.8411758720108542,
+  "test_at_best_val_auc": {
+    "auc": 0.8643328012697382,
+    "ap": 0.8274220206257793
+  }
+}

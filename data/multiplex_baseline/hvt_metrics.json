@@ -1,0 +1,25 @@
+{
+  "task": "hvt_single",
+  "data_path": "data/multiplex_baseline/pyg_data.pt",
+  "seed": 2025,
+  "hidden_dim": 64,
+  "num_layers": 2,
+  "dropout": 0.5,
+  "pos_weight": 5.0,
+  "best_threshold": 0.32,
+  "val_best": {
+    "acc": 0.9511111111111111,
+    "f1": 0.35294117647058826,
+    "auc": 0.8437209302325582
+  },
+  "train": {
+    "acc": 0.9580952380952381,
+    "f1": 0.5510204081632653,
+    "auc": 0.8746642302421197
+  },
+  "test": {
+    "acc": 0.9644444444444444,
+    "f1": 0.42857142857142855,
+    "auc": 0.8013953488372092
+  }
+}
