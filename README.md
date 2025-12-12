@@ -22,38 +22,38 @@
 
 ## 🔍 TL;DR
 
-- **Purpose-built sandbox** for studying disruption strategies on synthetic terrorist networks without touching real data.
-- Generate **5-layer multiplex graphs** (hierarchy, finance, communication, operations, ideology) with configurable noise and structure.
-- Train a **multi-task R-GCN** for:
-  - High-value target (HVT) classification
-  - Role classification (courier, financier, leader, operative, support)
-  - Node-level importance regression
-- Benchmark **layer-wise link prediction** on finance & communication edges with uniform or hard-negative sampling.
-- Reproduce everything end-to-end with three short CLI commands.
+A **purpose-built research sandbox** for disruption and risk analysis on **purely synthetic** multiplex terrorist networks — designed to be **safe, configurable, and reproducible**.
 
-> **One-line summary:** Generate 5-layer multiplex terrorist networks and train multi-task GNN baselines for HVT detection, role classification, and layer-aware link prediction.
+- **Generate** 5-layer multiplex graphs *(hierarchy, finance, communication, operations, ideology)* with controllable structure, noise, and difficulty knobs.
+- **Train** a **multi-task R-GCN** for:
+  - **HVT detection** (high-value target classification)
+  - **Role inference** *(courier, financier, leader, operative, support)*
+  - **Node-level importance regression** (continuous criticality score)
+- **Benchmark** **layer-aware link prediction** on **finance** & **communication** edges using uniform negatives or **hard-negative sampling**.
+- **Reproduce** end-to-end results with **three short CLI commands**.
+
+> **One-line summary:** Generate 5-layer synthetic multiplex terror networks and train multi-task GNN baselines for HVT detection, role inference, importance scoring, and layer-aware link prediction.
 
 ---
 
 ## 🧠 Motivation
 
-Real-world terrorist and extremist networks are:
+Operational terrorist/extremist networks are difficult to study rigorously because they are:
 
-- **Multi-layered**: hierarchy, financing, communication, operations, ideology
-- **Noisy and incomplete**: only partial observations, missing nodes/edges
-- **Risk-sensitive**: analysts care about **who to disrupt** (HVTs), not just who is central
+- **Multiplex**: interactions span hierarchy, financing, communication, operations, and ideology
+- **Noisy & incomplete**: partial observability, missing nodes/edges, sampling bias
+- **Risk-sensitive**: analysts care about **actionability** (who to disrupt), not only generic centrality
 
-This repository provides a **safe, reproducible sandbox** to probe those challenges without operational data:
+This repository provides a **safe, reproducible sandbox** that captures those realities **without using any real-world data**:
 
-1. A configurable **synthetic generator** for multiplex terrorist networks.
-2. A **multi-task GNN baseline** for HVT detection, role classification, and importance regression.
-3. **Layer-wise link prediction baselines** that quantify structural signal quality under varying difficulty.
+1. **Configurable synthetic generator** for multiplex terrorist networks (with explicit difficulty controls).
+2. **Multi-task GNN baselines** for HVT detection, role classification, and importance regression.
+3. **Layer-wise link prediction benchmarks** to quantify how much signal each layer provides as difficulty increases.
 
-Built for:
-
-- Network science and security researchers
-- GNN / representation learning practitioners
-- Builders exploring risk-aware disruption strategies in complex networks
+**Designed for:**
+- Network science & security research
+- GNN / representation learning experimentation
+- Prototyping **risk-aware disruption** strategies on complex graphs
 
 ---
 
@@ -61,29 +61,36 @@ Built for:
 
 - **Multiplex Generator (v2)**
   - 5 layers: `hierarchy`, `finance`, `communication`, `operation`, `ideology`
-  - Node attributes: region, group, role, and continuous features
-  - Difficulty knobs per config: `finance_structure_strength`, `comm_structure_strength`, `comm_randomness`, `hvt_ratio`, ...
+  - Node attributes: **region**, **group**, **role**, plus continuous feature vectors
+  - Configurable difficulty knobs (examples): `finance_structure_strength`, `comm_structure_strength`, `comm_randomness`, `hvt_ratio`, ...
 
-- **Config-driven Difficulty**
-  - Ready-to-run presets: `configs/generator_easy.json`, `configs/generator_baseline.json`, `configs/generator_hard.json`
-  - Swap configs to stress-test robustness to structural noise
+- **Config-Driven Difficulty**
+  - Ready-to-run presets:
+    - `configs/generator_easy.json`
+    - `configs/generator_baseline.json`
+    - `configs/generator_hard.json`
+  - Swap configs to **stress-test robustness** under increasing structural noise
 
 - **PyG Dataset Builder**
-  - Emits a single `torch_geometric.data.Data` object with:
-    - `x`, `edge_index`, `edge_type`, `edge_attr`
-    - `y_role`, `y_hvt`, `importance_score`
-    - `train_mask`, `val_mask`, `test_mask`
+  - Produces a single `torch_geometric.data.Data` object containing:
+    - Graph: `x`, `edge_index`, `edge_type`, `edge_attr`
+    - Labels: `y_role`, `y_hvt`, `importance_score`
+    - Splits: `train_mask`, `val_mask`, `test_mask`
     - Metadata: `role_mapping`, `region_mapping`, `imp_mean`, `imp_std`, ...
 
 - **Model Zoo**
-  - `MultiTaskRGCN`: shared encoder + heads for role, HVT, and importance
+  - `MultiTaskRGCN`: shared R-GCN encoder + task heads (**role**, **HVT**, **importance**)
   - `HvtRGCN`: single-task HVT baseline
-  - Link prediction: R-GCN encoder + decoder with uniform or hard-negative sampling (`uniform`, `hard_region`)
+  - Link prediction: R-GCN encoder + decoder with negative sampling modes:
+    - `uniform`
+    - `hard_region` (hard negatives constrained by region)
 
 - **Experiment Suite**
-  - Shell-friendly scripts to generate data, build datasets, train models, and summarize results (`multitask_linkpred_summary.csv`)
+  - Shell-friendly scripts for end-to-end runs: **generate → build → train → evaluate**
+  - Automated result aggregation to `multitask_linkpred_summary.csv`
 
 ---
+
 
 ## 📁 Project Structure
 
@@ -241,32 +248,22 @@ Reference runs from `results/summary_all/multitask_linkpred_summary.csv`:
 
 ## 📜 License
 
-No explicit license is provided yet. For usage beyond personal or academic experimentation, please contact the maintainer.
+A license has **not** been selected yet.
+
+- For **personal or academic experimentation**, you may use the code as-is.
+- For any **commercial, operational, or redistributed** use, please contact the maintainer.
+
+If you plan to make this repository broadly reusable, consider adding an OSI-approved license (e.g., **MIT**, **Apache-2.0**) and including a `LICENSE` file at the project root.
+
+---
 
 ## 📚 Citation
 
-If you use this codebase in research, please cite the repository (or open an issue for a formal BibTeX entry):
+If you use this repository in academic work, please cite it as:
 
-```
-Yoon-seop, Lee. (2025). Multiplex Terror Network GNN (GitHub repository). https://github.com/Navy10021/multiplex-terror-network-gnn
-```
-
-If you use this codebase in research, please cite the repository (or open an issue for a formal BibTeX entry):
-
-```
-Yoon-seop, Lee. (2025). Multiplex Terror Network GNN (GitHub repository). https://github.com/Navy10021/multiplex-terror-network-gnn
-```
-
-If you use this codebase in research, please cite the repository (or open an issue for a formal BibTeX entry):
-
-```
-Yoon-seop, Lee. (2025). Multiplex Terror Network GNN (GitHub repository). https://github.com/Navy10021/multiplex-terror-network-gnn
-```
-
-If you use this codebase in research, please cite the repository (or open an issue for a formal BibTeX entry):
-
-```
-Yoon-seop, Lee. (2025). Multiplex Terror Network GNN (GitHub repository). https://github.com/Navy10021/multiplex-terror-network-gnn
+```text
+Lee, Yoon-seop. (2025). Multiplex Terror Network GNN (GitHub repository).
+https://github.com/Navy10021/multiplex-terror-network-gnn
 ```
 
 ## 📬 Contact
@@ -274,6 +271,7 @@ For questions, issues, or collaboration:
   - GitHub Issues: please open an issue in this repository.
   - Email: iyunseob4@gmail.com
 Contributions, bug reports, and ideas for new experiments are very welcome.
+
 
 
 
