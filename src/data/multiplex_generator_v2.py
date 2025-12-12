@@ -9,7 +9,7 @@ import random
 
 
 # -----------------------------
-# 데이터 클래스 정의
+# Data class definitions
 # -----------------------------
 @dataclass
 class Node:
@@ -38,7 +38,7 @@ class Event:
 
 
 # -----------------------------
-# Generator 설정 (config용)
+# Generator configuration (for configs)
 # -----------------------------
 @dataclass
 class GeneratorConfig:
@@ -52,7 +52,7 @@ class GeneratorConfig:
     finance_w_ideo: float = 1.0
     finance_w_tier_dist: float = 1.0
     finance_base_bias: float = 0.1
-    finance_structure_strength: float = 1.0  # 구조 강도 knob
+    finance_structure_strength: float = 1.0  # structural strength knob
 
     # communication layer
     comm_avg_degree: float = 3.5
@@ -79,8 +79,7 @@ def load_generator_config(
     seed: int,
 ) -> GeneratorConfig:
     """
-    JSON 파일에서 GeneratorConfig를 불러오고,
-    CLI에서 넘긴 size/seed로 덮어쓴다.
+    Load GeneratorConfig from JSON and override size/seed from CLI arguments.
     """
     if config_path is None:
         cfg = GeneratorConfig(size=size, seed=seed)
@@ -99,7 +98,7 @@ def load_generator_config(
     return cfg
 
 # -----------------------------
-# 설정값 (분포/가중치 등)
+# Default distributions / weights
 # -----------------------------
 ROLE_PROBS = {
     "leader": 0.024,      # ~ 3%
@@ -112,7 +111,7 @@ ROLE_PROBS = {
 REGIONS = ["Africa", "Asia", "Europe", "MiddleEast"]
 GROUPS = ["GroupA", "GroupB", "GroupC"]
 
-# tier: 계층적 거리 계산용
+# tier: used for hierarchical distance
 ROLE_TIER = {
     "leader": 0,
     "financier": 1,
@@ -123,7 +122,7 @@ ROLE_TIER = {
 
 
 # -----------------------------
-# 유틸 함수들
+# Utility functions
 # -----------------------------
 def set_seed(seed: int):
     np.random.seed(seed)
@@ -147,18 +146,18 @@ def sample_groups(num_nodes: int) -> List[str]:
 
 
 def sample_ideologies(num_nodes: int) -> np.ndarray:
-    # [0,1] 균등 분포 이념 좌표
+    # Ideology coordinate sampled from a uniform [0, 1] distribution
     return np.random.rand(num_nodes)
 
 # -----------------------------
-# Hierarchy 레이어 생성
+# Hierarchy layer
 # -----------------------------
 def build_hierarchy_edges(nodes: List[Node]) -> List[Edge]:
     """
-    매우 단순한 트리형 계층 구조 생성.
-    - leaders 최상단
-    - 그 아래에 financiers/operatives
-    - 그 아래에 couriers/support
+    Build a simple tree-shaped hierarchy structure:
+    - leaders at the top
+    - financiers/operatives in the middle
+    - couriers/support at the bottom
     """
     leaders = [n.id for n in nodes if n.role == "leader"]
     financiers = [n.id for n in nodes if n.role == "financier"]
@@ -176,7 +175,7 @@ def build_hierarchy_edges(nodes: List[Node]) -> List[Edge]:
         leader_id = leaders[idx % len(leaders)]
         edges.append(Edge(source=leader_id, target=f_id))
 
-    # 중간 계층 -> couriers/support
+    # mid-level -> couriers/support
     mid_level = financiers + operatives
     if mid_level:
         for idx, nid in enumerate(couriers + supports):
@@ -187,7 +186,7 @@ def build_hierarchy_edges(nodes: List[Node]) -> List[Edge]:
 
 
 # -----------------------------
-# Finance 레이어 (structured v2)
+# Finance layer (structured v2)
 # -----------------------------
 def build_finance_edges(
     nodes: List[Node],
@@ -200,20 +199,20 @@ def build_finance_edges(
     base_bias: float = 0.1,
 ) -> List[Edge]:
     """
-    Financier -> 다른 노드로 가는 구조적 자금 흐름 엣지 생성.
-    score(u,v) = base_bias +
+    Create structured money flow edges from financiers to other nodes.
+    score(u, v) = base_bias +
                  w_group * 1(same_group) +
                  w_region * 1(same_region) +
-                 w_ideo * ideology_sim(u,v) -
-                 w_tier_dist * tier_distance(u,v)
-    을 weight로 사용해, financier 당 target_out_degree 만큼 샘플링.
+                 w_ideo * ideology_sim(u, v) -
+                 w_tier_dist * tier_distance(u, v)
+    Use the score as a weight to sample target_out_degree edges per financier.
     """
     id_to_node: Dict[int, Node] = {n.id: n for n in nodes}
     num_nodes = len(nodes)
     ideology = np.array([n.ideology for n in nodes])
     roles = [n.role for n in nodes]
 
-    # tier 정보
+    # tier information
     tiers = np.array([ROLE_TIER[role] for role in roles])
 
     financiers = [n.id for n in nodes if n.role == "financier"]
@@ -222,9 +221,9 @@ def build_finance_edges(
 
     edges: List[Edge] = []
 
-    # 각 financier별 target out-degree (약간의 랜덤성 포함)
+    # target out-degree per financier (with slight randomness)
     for fid in financiers:
-        # 평균 18, 표준편차 4 정도로 설정
+        # mean 18, standard deviation around 4
         target_k = max(5, int(np.random.normal(loc=avg_out_degree, scale=4.0)))
         u = fid
 
@@ -234,7 +233,7 @@ def build_finance_edges(
         u_ideo = u_node.ideology
         u_tier = ROLE_TIER[u_node.role]
 
-        # 후보 v: 자기 자신 제외
+        # candidate v: exclude self
         candidates = [v for v in range(num_nodes) if v != u]
         cand_groups = np.array([id_to_node[v].group for v in candidates])
         cand_regions = np.array([id_to_node[v].region for v in candidates])
@@ -254,14 +253,14 @@ def build_finance_edges(
             - w_tier_dist * tier_dist
         )
 
-        # 음수/zero 방지
+        # prevent negative/zero probabilities
         score = np.maximum(score, 1e-6)
         weights = score / score.sum()
 
-        # 후보 수보다 target_k가 클 수 있으니 min
+        # clamp to the number of available candidates
         k = min(target_k, len(candidates))
 
-        # 중복 없이 샘플링
+        # sample without replacement
         chosen_idx = np.random.choice(len(candidates), size=k, replace=False, p=weights)
         for idx in chosen_idx:
             v = candidates[idx]
@@ -271,7 +270,7 @@ def build_finance_edges(
 
 
 # -----------------------------
-# Communication 레이어 (structured v2)
+# Communication layer (structured v2)
 # -----------------------------
 def build_communication_edges(
     nodes: List[Node],
@@ -285,10 +284,10 @@ def build_communication_edges(
     alpha_fin: float = 1.5,
 ) -> List[Edge]:
     """
-    hierarchy/finance/group/region 구조를 반영하는 연락망 생성.
-    - 노드별 target degree를 평균 avg_degree 주변에서 설정.
-    - weight(i,j) = alpha0 + alpha_group * 1(same_group) + ... 를 기반으로 샘플링.
-    - undirected에 가깝게, (i,j) 한 번만 생성 (source < target 규칙).
+    Build a communication network informed by hierarchy/finance/group/region.
+    - Set per-node target degree around avg_degree.
+    - Sample edges based on weight(i, j) = alpha0 + alpha_group * 1(same_group) + ...
+    - Generate each (i, j) once with source < target to stay close to undirected.
     """
     id_to_node: Dict[int, Node] = {n.id: n for n in nodes}
     num_nodes = len(nodes)
@@ -303,7 +302,7 @@ def build_communication_edges(
 
     edges_set = set()
 
-    # 미리 group/region 배열 준비
+    # precompute group/region arrays
     groups = np.array([n.group for n in nodes])
     regions = np.array([n.region for n in nodes])
 
@@ -313,7 +312,7 @@ def build_communication_edges(
         u_group = groups[u]
         u_region = regions[u]
 
-        # 후보: 자기 자신 제외
+        # candidates: exclude self
         candidates = np.array([v for v in range(num_nodes) if v != u])
         cand_groups = groups[candidates]
         cand_regions = regions[candidates]
@@ -321,7 +320,7 @@ def build_communication_edges(
         same_group = (cand_groups == u_group).astype(float)
         same_region = (cand_regions == u_region).astype(float)
 
-        # hierarchy/finance 연결 여부
+        # whether nodes are connected in hierarchy/finance layers
         hier_link = np.array(
             [1.0 if (u, int(v)) in hier_set or (int(v), u) in hier_set else 0.0 for v in candidates]
         )
@@ -346,18 +345,18 @@ def build_communication_edges(
             a, b = (u, v) if u < v else (v, u)
             edges_set.add((a, b))
 
-    # set -> Edge 리스트
+    # set -> list of Edge objects
     edges = [Edge(source=a, target=b) for (a, b) in edges_set]
     return edges
 
 
 # -----------------------------
-# Ideology 레이어 (간단한 유사도 기반)
+# Ideology layer (simple similarity-based)
 # -----------------------------
 def build_ideology_edges(nodes: List[Node], threshold: float = 0.2) -> List[Edge]:
     """
-    ideology 값이 가까운 노드들 사이에 edge 생성.
-    threshold: |ideo_u - ideo_v| < threshold 면 연결.
+    Create edges between ideologically similar nodes.
+    Connect nodes when |ideo_u - ideo_v| < threshold.
     """
     num_nodes = len(nodes)
     ideology = np.array([n.ideology for n in nodes])
@@ -371,12 +370,12 @@ def build_ideology_edges(nodes: List[Node], threshold: float = 0.2) -> List[Edge
 
 
 # -----------------------------
-# Operation 레이어 (간단한 소수의 작전 셀)
+# Operation layer (simple small operation cells)
 # -----------------------------
 def build_operation_edges(nodes: List[Node], num_cells: int = 20, cell_size: int = 4) -> List[Edge]:
     """
-    작은 작전 셀(operation cell)을 몇 개 만든다.
-    - 각 셀은 무작위 노드 중 몇 명씩 묶고, 완전 그래프 형태로 연결.
+    Create a handful of small operation cells.
+    - Each cell groups a few random nodes and fully connects them.
     """
     num_nodes = len(nodes)
     all_ids = list(range(num_nodes))
@@ -390,7 +389,7 @@ def build_operation_edges(nodes: List[Node], num_cells: int = 20, cell_size: int
             break
         cell = all_ids[ptr : ptr + cell_size]
         ptr += cell_size
-        # 완전 그래프
+        # fully connected subgraph
         for i in range(len(cell)):
             for j in range(i + 1, len(cell)):
                 u, v = cell[i], cell[j]
@@ -399,7 +398,7 @@ def build_operation_edges(nodes: List[Node], num_cells: int = 20, cell_size: int
 
 
 # -----------------------------
-# Event 생성 (간단 버전)
+# Event generation (simple version)
 # -----------------------------
 def build_events(
     finance_edges: List[Edge],
@@ -408,11 +407,11 @@ def build_events(
     num_days: int = 300,
 ) -> List[Event]:
     """
-    매우 단순한 이벤트 생성:
-    - finance edge 당 1~3개 txn 이벤트
-    - comm edge 당 1~5개 comm 이벤트
-    - op edge 당 1~3개 op 이벤트
-    time: [0, num_days) 정수 일 단위
+    Generate simple events:
+    - 1–3 txn events per finance edge
+    - 1–5 comm events per communication edge
+    - 1–3 op events per operation edge
+    time: integer days in [0, num_days)
     """
     events: List[Event] = []
 
@@ -421,7 +420,7 @@ def build_events(
         k = np.random.randint(1, 4)
         for _ in range(k):
             t = int(np.random.randint(0, num_days))
-            amount = float(np.random.lognormal(mean=8.0, sigma=1.0))  # log-normal 자금 규모
+            amount = float(np.random.lognormal(mean=8.0, sigma=1.0))  # log-normal transaction size
             events.append(
                 Event(
                     time=t,
@@ -437,7 +436,7 @@ def build_events(
         k = np.random.randint(1, 6)
         for _ in range(k):
             t = int(np.random.randint(0, num_days))
-            duration = int(np.random.exponential(scale=5.0))  # 통화 길이 같은 것
+            duration = int(np.random.exponential(scale=5.0))  # call duration proxy
             events.append(
                 Event(
                     time=t,
@@ -467,7 +466,7 @@ def build_events(
 
 
 # -----------------------------
-# importance_score & HVT 계산
+# importance_score & HVT computation
 # -----------------------------
 def compute_importance_and_hvt(
     nodes: List[Node],
@@ -518,24 +517,24 @@ def compute_importance_and_hvt(
         scores[i] = s
         n.importance_score = float(s)
 
-    # HVT: 상위 hvt_ratio 퍼센트
+    # HVT: top hvt_ratio percentile
     threshold = np.quantile(scores, 1.0 - hvt_ratio)
     for n in nodes:
         n.high_value_target = int(n.importance_score >= threshold)
 
 
 # -----------------------------
-# 메인 제너레이터
+# Main generator
 # -----------------------------
 def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
     """
-    GeneratorConfig 기반으로 multiplex manifest를 생성.
+    Generate a multiplex manifest using the GeneratorConfig.
     """
     set_seed(cfg.seed)
 
     num_nodes = cfg.size
 
-    # 1) 노드 생성
+    # 1) create nodes
     roles = sample_roles(num_nodes)
     regions = sample_regions(num_nodes)
     groups = sample_groups(num_nodes)
@@ -553,10 +552,10 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
             )
         )
 
-    # 2) 계층 레이어
+    # 2) hierarchy layer
     hierarchy_edges = build_hierarchy_edges(nodes)
 
-    # 3) finance 레이어 (config + 구조강도 knob)
+    # 3) finance layer (config + structural strength knob)
     fs = cfg.finance_structure_strength
     finance_edges = build_finance_edges(
         nodes,
@@ -569,17 +568,17 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
         base_bias=cfg.finance_base_bias,
     )
 
-    # 4) ideology 레이어
+    # 4) ideology layer
     ideology_edges = build_ideology_edges(nodes, threshold=cfg.ideo_threshold)
 
-    # 5) operation 레이어
+    # 5) operation layer
     operation_edges = build_operation_edges(
         nodes,
         num_cells=cfg.op_num_cells,
         cell_size=cfg.op_cell_size,
     )
 
-    # 6) communication 레이어 (config + 구조강도/랜덤성 knob)
+    # 6) communication layer (config + structural strength/randomness knobs)
     cs = cfg.comm_structure_strength
     cr = cfg.comm_randomness
 
@@ -601,10 +600,10 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
         alpha_fin=alpha_fin,
     )
 
-    # 7) 이벤트 생성
+    # 7) generate events
     events = build_events(finance_edges, communication_edges, operation_edges, num_days=300)
 
-    # 8) importance_score / HVT 계산
+    # 8) compute importance_score / HVT
     op_events = [ev for ev in events if ev.event_type == "op"]
     compute_importance_and_hvt(
         nodes,
@@ -615,7 +614,7 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
         hvt_ratio=cfg.hvt_ratio,
     )
 
-    # 9) manifest JSON 구성
+    # 9) assemble manifest JSON
     manifest = {
         "meta": {
             "num_nodes": num_nodes,
