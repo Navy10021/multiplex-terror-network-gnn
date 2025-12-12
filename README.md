@@ -251,13 +251,13 @@ No explicit license is provided yet. For usage beyond personal or academic exper
 If you use this codebase in research, please cite the repository (or open an issue for a formal BibTeX entry):
 
 ```
-Yunseob, I. (2025). Multiplex Terror Network GNN (GitHub repository). https://github.com/Navy10021/multiplex-terror-network-gnn
+Yoon-seop, Lee. (2025). Multiplex Terror Network GNN (GitHub repository). https://github.com/Navy10021/multiplex-terror-network-gnn
 ```
 
 If you use this codebase in research, please cite the repository (or open an issue for a formal BibTeX entry):
 
 ```
-Yunseob, I. (2024). Multiplex Terror Network GNN (GitHub repository). https://github.com/Navy10021/multiplex-terror-network-gnn
+Yoon-seop, Lee. (2025). Multiplex Terror Network GNN (GitHub repository). https://github.com/Navy10021/multiplex-terror-network-gnn
 ```
 
 ## 📬 Contact
@@ -265,6 +265,7 @@ For questions, issues, or collaboration:
   - GitHub Issues: please open an issue in this repository.
   - Email: iyunseob4@gmail.com
 Contributions, bug reports, and ideas for new experiments are very welcome.
+
 
 
 
