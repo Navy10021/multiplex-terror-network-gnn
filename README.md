@@ -1,4 +1,4 @@
-<h1 align="center">Multiplex Terror Network GNN</h1>
+<h1 align="center">🔬🕸️ Multiplex Terror Network GNN</h1>
 
 <p align="center">
   <b>Synthetic multiplex terrorist networks</b> + <b>multi-task GNN baselines</b> for
