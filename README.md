@@ -174,32 +174,50 @@ End-to-end in three steps (works for `easy`, `baseline`, or `hard`).
 1) **Generate a multiplex graph**
 ```bash
 python src/data/multiplex_generator_v2.py \
-  --config configs/generator_easy.json \
-  --out_dir data/multiplex_easy
+  --size 1500 \
+  --seed 2025 \
+  --out_dir data/multiplex_baseline \
+  --config configs/generator_baseline.json
 ```
 
 2) **Convert to a PyG dataset**
 ```bash
 python src/data/build_pyg_dataset.py \
-  --manifest data/multiplex_easy/multiplex.json \
-  --out_path data/multiplex_easy/pyg_data.pt
+  --manifest data/multiplex_baseline/multiplex.json \
+  --out_path data/multiplex_baseline/pyg_data.pt
 ```
 
-3) **Train models**
+3) **Convert to a PyG dataset**
+```bash
+python src/data/basic_diagnostics.py \
+  --manifest data/multiplex_baseline/multiplex.json \
+  --out_dir data/analysis/multiplex_baseline
+```
+
+4) **Train models**
 - Multi-task HVT + role + importance
   ```bash
   python src/models/train_multitask_gnn.py \
-    --data_path data/multiplex_easy/pyg_data.pt \
-    --hidden_dim 128 --num_layers 3 --epochs 300
+    --data_path data/multiplex_baseline/pyg_data.pt \
+    --hidden_dim 64 --num_layers 3 --lr 1e-3 --epochs 500
   ```
 - Layer-wise link prediction (finance or communication) with hard-negative sampling
   ```bash
   python src/models/train_linkpred_layer.py \
-    --data_path data/multiplex_easy/pyg_data.pt \
-    --layer finance --neg_mode hard_region --epochs 200
+    --data_path data/multiplex_baseline/pyg_data.pt \
+    --layer finance --hidden_dim 64 --num_layers 3 --lr 1e-3 --neg_mode hard_region --epochs 500
   ```
 
 Artifacts are stored next to the dataset (metrics JSON, training curves, link AUC/AP). Repeat with `configs/generator_baseline.json` or `configs/generator_hard.json` to sweep difficulty.
+
+### Option 2 - Jupyter Notebook
+A Jupyter notebook is provided (e.g., notebooks/multiplex-terror-network-gnn.ipynb) that:
+- Generates one or more networks
+- Trains the GNN-based models
+- Runs evaluation
+- Visualizes and interprets results
+
+Open it in VSCode or JupyterLab and adapt cells to your scenario.
 
 ## 🧪 Smoke Tests & CI
 - Run a minimal end-to-end pipeline (generator → PyG dataset) to catch regressions quickly:
@@ -226,6 +244,8 @@ Artifacts are stored next to the dataset (metrics JSON, training curves, link AU
   ```
 - When launching training scripts, set `--output_dir` or similar arguments to follow this structure so runs remain comparable across difficulty levels and model types.
 
+---
+
 ## 📊 Example Results (Summary)
 Reference runs from `results/summary_all/multitask_linkpred_summary.csv`:
 
@@ -237,6 +257,8 @@ Reference runs from `results/summary_all/multitask_linkpred_summary.csv`:
 
 - Role F1 and importance R² degrade noticeably under the `hard` setting, while link prediction AUC stays robust—useful for stress-testing models against structural noise.
 
+---
+
 ## 🛠️ Extending the Framework
 
 - **Custom difficulty:** copy a config under `configs/` and tweak `finance_structure_strength`, `comm_structure_strength`, `comm_randomness`, and `hvt_ratio`. Pass it via `--config` to `multiplex_generator_v2.py`.
@@ -245,6 +267,28 @@ Reference runs from `results/summary_all/multitask_linkpred_summary.csv`:
   - Add heads or encoders in `src/models/train_multitask_gnn.py` for alternative loss balancing or architectures.
   - Swap decoders or negative sampling in `src/models/train_linkpred_layer.py` to test other link-prediction strategies.
 - **Reporting:** regenerate summary plots with `src/analysis/plot_multitask_linkpred_summary.py` after adding new runs.
+
+---
+
+## 🔒 Ethical Considerations
+
+This repository is built with **defensive, academic purposes** in mind:
+
+- ✅ **Synthetic Data Only**  
+  All networks are generated synthetically. No real persons, organizations, or operational data are used.
+- ✅ **Counter-Terrorism & Lawful Use**  
+  The framework is intended for legitimate research in **counter-terrorism**, **criminal network analysis**, and **resilience planning**.
+- ✅ **Transparency & Reproducibility**  
+  Open code for peer review and academic scrutiny.
+
+**Do NOT use this code to:**
+
+- Target legitimate political groups or civil organizations,
+- Conduct unauthorized surveillance,
+- Suppress lawful protest, free speech, or assembly,
+- Analyze real social networks without proper legal and ethical oversight.
+
+---
 
 ## 📜 License
 
@@ -271,6 +315,7 @@ For questions, issues, or collaboration:
   - GitHub Issues: please open an issue in this repository.
   - Email: iyunseob4@gmail.com
 Contributions, bug reports, and ideas for new experiments are very welcome.
+
 
 
 
