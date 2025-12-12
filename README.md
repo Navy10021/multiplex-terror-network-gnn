@@ -1,6 +1,6 @@
 # Multiplex Terror Network GNN
 
-Synthetic multiplex terrorist networks and multi-task GNNs for high-value target (HVT) detection and link prediction.
+Synthetic multiplex terrorist networks and multi-task GNNs for high-value target (HVT) detection, role inference, and layer-aware link prediction.
 
 > ⚠️ **Disclaimer**  
 > This repository uses **purely synthetic** data to study algorithms for network disruption and risk analysis.  
@@ -10,17 +10,16 @@ Synthetic multiplex terrorist networks and multi-task GNNs for high-value target
 
 ## 🔍 TL;DR
 
-- We generate **5-layer multiplex terrorist networks** (hierarchy, finance, communication, operations, ideology).
-- We train a **multi-task GNN** that jointly learns:
-  - High-value target (HVT) classification  
-  - Role classification (courier, financier, leader, operative, support)  
+- **Purpose-built sandbox** for studying disruption strategies on synthetic terrorist networks without touching real data.
+- Generate **5-layer multiplex graphs** (hierarchy, finance, communication, operations, ideology) with configurable noise and structure.
+- Train a **multi-task R-GCN** for:
+  - High-value target (HVT) classification
+  - Role classification (courier, financier, leader, operative, support)
   - Node-level importance regression
-- We benchmark **layer-wise link prediction** (finance & communication) under multiple difficulty settings:
-  - `easy` / `baseline` / `hard` (controlled structural noise & randomness)
-- All experiments are fully reproducible via small command-line scripts.
+- Benchmark **layer-wise link prediction** on finance & communication edges with uniform or hard-negative sampling.
+- Reproduce everything end-to-end with three short CLI commands.
 
-한국어 한 줄 요약:  
-5레이어 멀티플렉스 테러 네트워크를 합성하고, HVT 탐지·역할 분류·링크 예측을 위한 멀티태스크 GNN 실험 코드를 제공합니다.
+> **One-line summary:** Generate 5-layer multiplex terrorist networks and train multi-task GNN baselines for HVT detection, role classification, and layer-aware link prediction.
 
 ---
 
@@ -28,64 +27,49 @@ Synthetic multiplex terrorist networks and multi-task GNNs for high-value target
 
 Real-world terrorist and extremist networks are:
 
-- **Multi-layered**: physical hierarchy, financing, communication, operations, ideology
+- **Multi-layered**: hierarchy, financing, communication, operations, ideology
 - **Noisy and incomplete**: only partial observations, missing nodes/edges
 - **Risk-sensitive**: analysts care about **who to disrupt** (HVTs), not just who is central
 
-This repository provides a **research sandbox**:
+This repository provides a **safe, reproducible sandbox** to probe those challenges without operational data:
 
-1. A configurable **synthetic data generator** for multiplex terrorist networks.
-2. A **multi-task GNN baseline** for *HVT detection + role classification + importance regression*.
-3. A set of **layer-wise link prediction baselines** to quantify structural signal quality.
+1. A configurable **synthetic generator** for multiplex terrorist networks.
+2. A **multi-task GNN baseline** for HVT detection, role classification, and importance regression.
+3. **Layer-wise link prediction baselines** that quantify structural signal quality under varying difficulty.
 
-It is intended as a starting point for:
+Built for:
 
-- Network science & security researchers
-- GNN / representation learning researchers
-- Practitioners exploring risk-aware disruption strategies in complex networks
+- Network science and security researchers
+- GNN / representation learning practitioners
+- Builders exploring risk-aware disruption strategies in complex networks
 
 ---
 
-## ✨ Key Features
+## ✨ Highlights
 
-- **Multiplex Generator (v2)**  
+- **Multiplex Generator (v2)**
   - 5 layers: `hierarchy`, `finance`, `communication`, `operation`, `ideology`
-  - Node attributes: region, group, role, continuous features
-  - Difficulty knobs (per config):
-    - `finance_structure_strength`
-    - `comm_structure_strength`
-    - `comm_randomness`
-    - `hvt_ratio`, etc.
+  - Node attributes: region, group, role, and continuous features
+  - Difficulty knobs per config: `finance_structure_strength`, `comm_structure_strength`, `comm_randomness`, `hvt_ratio`, ...
 
-- **Config-driven Difficulty Levels**
-  - `configs/generator_easy.json`
-  - `configs/generator_baseline.json`
-  - `configs/generator_hard.json`
+- **Config-driven Difficulty**
+  - Ready-to-run presets: `configs/generator_easy.json`, `configs/generator_baseline.json`, `configs/generator_hard.json`
+  - Swap configs to stress-test robustness to structural noise
 
 - **PyG Dataset Builder**
-  - Outputs a single `torch_geometric.data.Data` object:
+  - Emits a single `torch_geometric.data.Data` object with:
     - `x`, `edge_index`, `edge_type`, `edge_attr`
     - `y_role`, `y_hvt`, `importance_score`
     - `train_mask`, `val_mask`, `test_mask`
-    - Meta: `role_mapping`, `region_mapping`, `imp_mean`, `imp_std`, …
+    - Metadata: `role_mapping`, `region_mapping`, `imp_mean`, `imp_std`, ...
 
-- **Models**
-  - `MultiTaskRGCN`:
-    - Shared R-GCN encoder
-    - Heads: role classification, HVT classification, importance regression
-  - `HvtRGCN`:
-    - Single-task HVT baseline
-  - Link prediction:
-    - Layer-specific link prediction with R-GCN encoder + simple decoder
-    - Uniform vs hard-negative sampling (`uniform`, `hard_region`)
+- **Model Zoo**
+  - `MultiTaskRGCN`: shared encoder + heads for role, HVT, and importance
+  - `HvtRGCN`: single-task HVT baseline
+  - Link prediction: R-GCN encoder + decoder with uniform or hard-negative sampling (`uniform`, `hard_region`)
 
 - **Experiment Suite**
-  - End-to-end scripts to:
-    - Generate data for `easy`, `baseline`, `hard`
-    - Build PyG datasets
-    - Train multi-task & single-task models
-    - Train link-prediction baselines
-    - Summarize results (`multitask_linkpred_summary.csv`)
+  - Shell-friendly scripts to generate data, build datasets, train models, and summarize results (`multitask_linkpred_summary.csv`)
 
 ---
 
@@ -166,14 +150,94 @@ pip install -r requirements.txt
 ```
 
 ## 🚀 Quick Start
+End-to-end in three steps (works for `easy`, `baseline`, or `hard`).
+
+1) **Generate a multiplex graph**
+```bash
+python src/data/multiplex_generator_v2.py \
+  --config configs/generator_easy.json \
+  --out_dir data/multiplex_easy
+```
+
+2) **Convert to a PyG dataset**
+```bash
+python src/data/build_pyg_dataset.py \
+  --manifest data/multiplex_easy/multiplex.json \
+  --out_path data/multiplex_easy/pyg_data.pt
+```
+
+3) **Train models**
+- Multi-task HVT + role + importance
+  ```bash
+  python src/models/train_multitask_gnn.py \
+    --data_path data/multiplex_easy/pyg_data.pt \
+    --hidden_dim 128 --num_layers 3 --epochs 300
+  ```
+- Layer-wise link prediction (finance or communication) with hard-negative sampling
+  ```bash
+  python src/models/train_linkpred_layer.py \
+    --data_path data/multiplex_easy/pyg_data.pt \
+    --layer finance --neg_mode hard_region --epochs 200
+  ```
+
+Artifacts are stored next to the dataset (metrics JSON, training curves, link AUC/AP). Repeat with `configs/generator_baseline.json` or `configs/generator_hard.json` to sweep difficulty.
+
+## 🧪 Smoke Tests & CI
+- Run a minimal end-to-end pipeline (generator → PyG dataset) to catch regressions quickly:
+  ```bash
+  pytest tests/test_smoke_pipeline.py::test_generate_and_build_pyg_roundtrip
+  ```
+- This uses a small graph (120 nodes) and exercises v2 generator defaults, data conversion, masks, and tensor outputs. It is safe to run locally or in CI as a lightweight sanity check.
+
+## 🗂️ Results & Logging Conventions
+- Recommended layout for experiment outputs:
+  ```text
+  results/
+    <difficulty>/          # easy | baseline | hard
+      multitask/           # multi-task encoder runs
+        <run_name>/
+          metrics.json     # loss/accuracy/F1 per split
+          curves.png       # optional training curves
+      linkpred_finance/
+        <run_name>/        # finance layer link prediction
+          metrics.json
+      linkpred_comm/
+        <run_name>/        # communication layer link prediction
+          metrics.json
+  ```
+- When launching training scripts, set `--output_dir` or similar arguments to follow this structure so runs remain comparable across difficulty levels and model types.
 
 ## 📊 Example Results (Summary)
+Reference runs from `results/summary_all/multitask_linkpred_summary.csv`:
+
+| Difficulty | HVT F1 | HVT AUC | Role F1 (macro) | Importance R² | Finance AUC (uniform) | Communication AUC (uniform) |
+| --- | --- | --- | --- | --- | --- | --- |
+| easy | 0.25 | 0.893 | 0.575 | 0.551 | 0.981 | 0.864 |
+| baseline | 0.50 | 0.918 | 0.280 | 0.331 | 0.980 | 0.864 |
+| hard | 0.286 | 0.886 | 0.188 | 0.172 | 0.970 | 0.796 |
+
+- Role F1 and importance R² degrade noticeably under the `hard` setting, while link prediction AUC stays robust—useful for stress-testing models against structural noise.
 
 ## 🛠️ Extending the Framework
 
+- **Custom difficulty:** copy a config under `configs/` and tweak `finance_structure_strength`, `comm_structure_strength`, `comm_randomness`, and `hvt_ratio`. Pass it via `--config` to `multiplex_generator_v2.py`.
+- **New node/edge features:** extend `generate_multiplex_with_config` in `src/data/multiplex_generator_v2.py` and ensure they are preserved in `build_pyg_dataset.py`.
+- **Model variants:**
+  - Add heads or encoders in `src/models/train_multitask_gnn.py` for alternative loss balancing or architectures.
+  - Swap decoders or negative sampling in `src/models/train_linkpred_layer.py` to test other link-prediction strategies.
+- **Reporting:** regenerate summary plots with `src/analysis/plot_multitask_linkpred_summary.py` after adding new runs.
+
 ## 📜 License
 
+No explicit license is provided yet. For usage beyond personal or academic experimentation, please contact the maintainer.
+
 ## 📚 Citation
+
+If you use this codebase in research, please cite the repository (or open an issue for a formal BibTeX entry):
+
+```
+Yunseob, I. (2024). Multiplex Terror Network GNN (GitHub repository). https://github.com/Navy10021/multiplex-terror-network-gnn
+```
 
 ## 📬 Contact
 For questions, issues, or collaboration:

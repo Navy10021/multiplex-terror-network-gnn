@@ -1,15 +1,15 @@
 """
 data/analysis/basic_diagnostics.py
 
-Multiplex synthetic terror network 기본 진단 / 시각화 스크립트.
+Basic diagnostics and visualization script for multiplex synthetic terror networks.
 
-기능:
-  - 1-1. 노드/엣지 수, 역할/지역/그룹 분포
-  - 1-2. 레이어별 degree 분포 (히스토그램)
-  - 1-3. 역할별 레이어 degree 통계
-  - 1-4. 크로스 레이어 degree 상관관계
-  - 1-5. importance_score / high_value_target 라벨 검증
-  - 1-6. 이벤트(communication / finance / operation) 시간·규모 분포
+Features:
+  - 1-1. Node/edge counts and role/region/group distributions
+  - 1-2. Degree distributions per layer (histograms)
+  - 1-3. Role-wise degree statistics per layer
+  - 1-4. Cross-layer degree correlations
+  - 1-5. importance_score / high_value_target label checks
+  - 1-6. Event (communication/finance/operation) timing and scale distributions
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ import pandas as pd
 
 
 # -------------------------------------
-# 유틸
+# Utilities
 # -------------------------------------
 
 def ensure_dir(path: str) -> None:
@@ -39,36 +39,36 @@ def load_multiplex(manifest_path: str):
         mani = json.load(f)
 
     # --------------------------------------------------
-    # 1) nodes / labels 처리
+    # 1) handle nodes / labels
     # --------------------------------------------------
     nodes_raw = mani.get("nodes")
 
-    # (A) v1 스타일: CSV 경로 문자열
+    # (A) v1 style: CSV path string
     if isinstance(nodes_raw, str):
         nodes = pd.read_csv(nodes_raw)
         labels_path = mani.get("labels")
         if labels_path is None:
-            raise ValueError("v1 포맷에서는 'labels'에 CSV 경로가 있어야 합니다.")
+            raise ValueError("v1 format requires 'labels' to provide a CSV path.")
         labels = pd.read_csv(labels_path)
 
-    # (B) v2 스타일: 노드 정보가 리스트(JSON 인라인)
+    # (B) v2 style: node information inline as a JSON list
     elif isinstance(nodes_raw, list):
         df_nodes = pd.DataFrame(nodes_raw)
 
-        # id / node_id 정규화
+        # normalize id / node_id
         if "node_id" in df_nodes.columns:
             pass
         elif "id" in df_nodes.columns:
             df_nodes = df_nodes.rename(columns={"id": "node_id"})
         else:
-            raise ValueError("nodes 객체에 'id' 또는 'node_id' 컬럼이 필요합니다.")
+            raise ValueError("'nodes' must include an 'id' or 'node_id' column.")
 
-        # 분석/진단에서 최소로 필요할 컬럼들 (v1과 호환 위해)
+        # minimum columns needed for analysis/diagnostics (and v1 compatibility)
         for col in ["node_id", "role", "region", "group"]:
             if col not in df_nodes.columns:
-                raise ValueError(f"nodes에 필수 컬럼 '{col}' 이(가) 없습니다.")
+                raise ValueError(f"Required column '{col}' missing in nodes.")
 
-        # 아래 컬럼들은 없으면 기본값으로 채워서라도 사용 가능하게 처리
+        # fill optional columns with defaults if missing
         if "skill_level" not in df_nodes.columns:
             df_nodes["skill_level"] = 0.0
         if "radicalization" not in df_nodes.columns:
@@ -80,7 +80,7 @@ def load_multiplex(manifest_path: str):
         if "high_value_target" not in df_nodes.columns:
             df_nodes["high_value_target"] = 0
 
-        # v1의 nodes.csv / labels.csv 구조를 흉내 낸 분리
+        # mimic the v1 nodes.csv / labels.csv split
         nodes = df_nodes[["node_id", "role", "region", "group"]].copy()
         labels = df_nodes[
             [
@@ -97,54 +97,54 @@ def load_multiplex(manifest_path: str):
         ].copy()
 
     else:
-        raise ValueError(f"'nodes' 필드 타입을 알 수 없습니다: {type(nodes_raw)}")
+        raise ValueError(f"Unrecognized type for 'nodes' field: {type(nodes_raw)}")
 
     # --------------------------------------------------
-    # 2) layers 처리
+    # 2) handle layers
     # --------------------------------------------------
     layers: Dict[str, pd.DataFrame] = {}
     raw_layers = mani.get("layers", {})
 
     for layer_name, layer_obj in raw_layers.items():
-        # (A) v1 스타일: CSV 경로 문자열
+        # (A) v1 style: CSV path string
         if isinstance(layer_obj, str):
             layers[layer_name] = pd.read_csv(layer_obj)
 
-        # (B) v2 스타일: {"directed": bool, "edges": [ {...}, ... ]}
+        # (B) v2 style: {"directed": bool, "edges": [ {...}, ... ]}
         elif isinstance(layer_obj, dict) and "edges" in layer_obj:
             df_layer = pd.DataFrame(layer_obj["edges"])
 
-            # basic_diagnostics에서 최소로 기대하는 컬럼: source / target
+            # minimum expected columns for basic_diagnostics: source / target
             if "source" not in df_layer.columns or "target" not in df_layer.columns:
                 raise ValueError(
-                    f"레이어 '{layer_name}' 에 'source', 'target' 컬럼이 필요합니다."
+                    f"Layer '{layer_name}' requires 'source' and 'target' columns."
                 )
 
-            # 그 외 amount / num_events / joint_ops / similarity 등은
-            # 코드 안에서 .get() 또는 fillna 로 처리되게 두면 됨.
+            # Other fields (amount / num_events / joint_ops / similarity, etc.)
+            # can be handled via .get() or fillna downstream.
             layers[layer_name] = df_layer
 
         else:
             raise ValueError(
-                f"레이어 '{layer_name}' 형식을 인식할 수 없습니다: {type(layer_obj)}"
+                f"Unrecognized layer format for '{layer_name}': {type(layer_obj)}"
             )
 
     # --------------------------------------------------
-    # 3) events 처리 (optional)
+    # 3) handle events (optional)
     # --------------------------------------------------
     events_raw = mani.get("events", None)
 
     if isinstance(events_raw, str):
-        # v1 스타일: CSV 경로
+        # v1 style: CSV path
         df_events = pd.read_csv(events_raw)
     elif isinstance(events_raw, list):
-        # v2 스타일: 리스트 인라인
+        # v2 style: inline list
         df_events = pd.DataFrame(events_raw)
     elif events_raw is None:
-        # 이벤트가 없을 수도 있음
+        # events may be missing entirely
         df_events = pd.DataFrame()
     else:
-        raise ValueError(f"'events' 필드 타입을 알 수 없습니다: {type(events_raw)}")
+        raise ValueError(f"Unrecognized type for 'events' field: {type(events_raw)}")
 
     return mani, nodes, labels, layers, df_events
 
@@ -159,7 +159,7 @@ def degree_dict_from_edges(df: pd.DataFrame, directed: bool) -> dict[str, int]:
 
 
 # -------------------------------------
-# 1-1. 기본 구조 점검
+# 1-1. Basic structure checks
 # -------------------------------------
 
 def basic_stats(nodes: pd.DataFrame, layers: dict[str, pd.DataFrame], out_dir: str):
@@ -186,7 +186,7 @@ def basic_stats(nodes: pd.DataFrame, layers: dict[str, pd.DataFrame], out_dir: s
     print("\nGroup distribution (ratio):")
     print(nodes["group"].value_counts(normalize=True).round(3))
 
-    # 역할/지역/그룹 바 차트 저장 (간단 버전)
+    # Save simple role/region/group bar charts
     ensure_dir(out_dir)
 
     plt.figure()
@@ -212,7 +212,7 @@ def basic_stats(nodes: pd.DataFrame, layers: dict[str, pd.DataFrame], out_dir: s
 
 
 # -------------------------------------
-# 1-2. 레이어별 degree 분포
+# 1-2. Degree distributions per layer
 # -------------------------------------
 
 
@@ -312,7 +312,7 @@ def degree_distributions(layers: dict[str, pd.DataFrame], out_dir: str):
 
 
 # -------------------------------------
-# 1-3. 역할별 구조적 특징
+# 1-3. Role-wise structural characteristics
 # -------------------------------------
 
 
@@ -354,20 +354,20 @@ def rolewise_degree_stats(nodes: pd.DataFrame, layers: dict[str, pd.DataFrame], 
     print("\nCommunication degree by role:")
     print(df.groupby("role")["comm_deg"].describe().round(3))
 
-    # 간단 boxplot 예시 (hierarchy / finance / communication)
+    # Simple boxplot examples (hierarchy / finance / communication)
     plt.figure(figsize=(10, 4))
     for i, col in enumerate(["hier_out_deg", "fin_out_deg", "comm_deg"]):
         plt.subplot(1, 3, i + 1)
         df.boxplot(column=col, by="role", rot=45)
         plt.title(col)
-        plt.suptitle("")  # 상단 공백 제거
+        plt.suptitle("")  # drop top spacing
     plt.tight_layout()
     plt.savefig(os.path.join(out_dir, "rolewise_degrees_boxplot.png"))
     plt.close()
 
 
 # -------------------------------------
-# 1-4. 크로스 레이어 degree 상관관계
+# 1-4. Cross-layer degree correlations
 # -------------------------------------
 
 
@@ -394,7 +394,7 @@ def cross_layer_correlations(nodes: pd.DataFrame, layers: dict[str, pd.DataFrame
     print("\nCorrelation matrix (deg_fin, deg_comm, deg_ops, deg_hier, deg_ideo):")
     print(df_deg[["deg_fin", "deg_comm", "deg_ops", "deg_hier", "deg_ideo"]].corr().round(3))
 
-    # 산점도 몇 개만 예시
+    # Example scatter plots
     plt.figure(figsize=(10, 4))
 
     plt.subplot(1, 2, 1)
@@ -415,7 +415,7 @@ def cross_layer_correlations(nodes: pd.DataFrame, layers: dict[str, pd.DataFrame
 
 
 # -------------------------------------
-# 1-5. 라벨 (importance_score / HVT) 검증
+# 1-5. Label checks (importance_score / HVT)
 # -------------------------------------
 
 
@@ -435,7 +435,7 @@ def label_diagnostics(labels: pd.DataFrame, out_dir: str):
     print("\nHVT ratio by role:")
     print(labels.groupby("role")["high_value_target"].mean().round(3))
 
-    # importance_score 히스토그램
+    # importance_score histogram
     plt.figure()
     plt.hist(labels["importance_score"], bins=30)
     plt.yscale("log")
@@ -446,7 +446,7 @@ def label_diagnostics(labels: pd.DataFrame, out_dir: str):
     plt.savefig(os.path.join(out_dir, "importance_score_hist.png"))
     plt.close()
 
-    # role별 importance_boxplot
+    # importance_score boxplot by role
     plt.figure(figsize=(6, 4))
     labels.boxplot(column="importance_score", by="role", rot=45)
     plt.title("importance_score by role")
@@ -457,13 +457,13 @@ def label_diagnostics(labels: pd.DataFrame, out_dir: str):
 
 
 # -------------------------------------
-# 1-6. 이벤트/시간 특성
+# 1-6. Event/time characteristics
 # -------------------------------------
 def event_time_diagnostics(df_events: pd.DataFrame, out_dir: str):
     """
-    이벤트/시간 진단:
-      - v1: 'timestamp' (datetime string) 컬럼을 사용
-      - v2: 'time', 'step' 등 숫자형 타임 인덱스를 사용했어도 동작하도록 확장
+    Event/time diagnostics:
+      - v1: uses a 'timestamp' (datetime string) column
+      - v2: also supports numeric time indices such as 'time' or 'step'
     """
     os.makedirs(out_dir, exist_ok=True)
 
@@ -475,11 +475,11 @@ def event_time_diagnostics(df_events: pd.DataFrame, out_dir: str):
     if "event_type" in df_events.columns:
         print(df_events["event_type"].value_counts())
     else:
-        print("  [WARN] 'event_type' 컬럼이 없어 타입별 카운트는 생략합니다.")
+        print("  [WARN] 'event_type' column missing; skip per-type counts.")
         print("  Available columns:", list(df_events.columns))
 
     # --------------------------------------------------
-    # 1) 시간 컬럼 자동 탐색
+    # 1) auto-detect time column
     # --------------------------------------------------
     time_candidates = ["timestamp", "time", "date", "t", "step", "day"]
     time_col = None
@@ -490,35 +490,35 @@ def event_time_diagnostics(df_events: pd.DataFrame, out_dir: str):
 
     if time_col is None:
         print(
-            "\n[1-6] 시간 정보 컬럼(timestamp/time/date/step 등)을 찾지 못했습니다."
+            "\n[1-6] Could not find a time column (timestamp/time/date/step/etc.)."
         )
-        print("       → temporal diagnostics는 스킵합니다.")
+        print("       → skipping temporal diagnostics.")
         print("       Available columns:", list(df_events.columns))
         return
 
     print(f"\n[1-6] Using '{time_col}' as time column for temporal diagnostics.")
 
     # --------------------------------------------------
-    # 2) 시간 컬럼 타입에 따라 전처리
-    #    - 숫자형이면 step/day 인덱스로 사용
-    #    - 문자열/타임스탬프면 datetime 으로 파싱
+    # 2) preprocess according to time column type
+    #    - numeric: use as step/day index
+    #    - string/datetime: parse to datetime
     # --------------------------------------------------
     col = df_events[time_col]
 
     if pd.api.types.is_numeric_dtype(col):
-        # 숫자형: step/day 인덱스로 그대로 사용
+        # numeric: use as-is for step/day index
         df_events = df_events.copy()
         df_events["time_bin"] = col.astype(int)
-        # 일 단위로 본다고 가정하고 'date' = time_bin 으로 사용
+        # assume daily bins and reuse as 'date'
         df_events["date"] = df_events["time_bin"]
     else:
-        # 문자열 / datetime: to_datetime 후 날짜로 변환
+        # string/datetime: parse then convert to date
         df_events = df_events.copy()
         df_events["timestamp_dt"] = pd.to_datetime(col, errors="coerce")
         df_events["date"] = df_events["timestamp_dt"].dt.date
 
     # --------------------------------------------------
-    # 3) 이벤트 타입별 일일 카운트 / 통계
+    # 3) daily counts/statistics by event type
     # --------------------------------------------------
     def _describe_event_type(event_name: str):
         df_sub = df_events[df_events.get("event_type", "") == event_name].copy()
@@ -531,8 +531,8 @@ def event_time_diagnostics(df_events: pd.DataFrame, out_dir: str):
         print(f"\n[{event_name}] daily event count stats:")
         print(daily_counts.describe())
 
-        # 간단히 히스토그램이나 타임 시리즈 플롯을 저장하고 싶으면 여기서 추가
-        # 예: 히스토그램
+        # optionally save simple histograms or time series plots here
+        # e.g., histogram
         import matplotlib.pyplot as plt
 
         plt.figure()
@@ -544,14 +544,14 @@ def event_time_diagnostics(df_events: pd.DataFrame, out_dir: str):
         plt.savefig(os.path.join(out_dir, f"{event_name}_daily_count_hist.png"))
         plt.close()
 
-    # comm / txn / op 순서로 진단
+    # diagnose in comm / txn / op order
     _describe_event_type("comm")
     _describe_event_type("txn")
     _describe_event_type("op")
 
 
 # -------------------------------------
-# 메인
+# Main
 # -------------------------------------
 
 def main():
