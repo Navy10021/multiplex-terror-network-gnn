@@ -15,9 +15,9 @@ from sklearn.metrics import roc_auc_score, average_precision_score
 
 class RGCNEncoder(nn.Module):
     """
-    간단한 다중관계 R-GCN 인코더.
-    - 입력: x, edge_index, edge_type
-    - 출력: 노드 임베딩 h
+    Simple multi-relation R-GCN encoder.
+    - Input: x, edge_index, edge_type
+    - Output: node embedding h
     """
 
     def __init__(
@@ -35,16 +35,16 @@ class RGCNEncoder(nn.Module):
         self.bns = nn.ModuleList()
         self.dropout = dropout
 
-        # 첫 레이어
+        # First layer
         self.convs.append(RGCNConv(in_channels, hidden_channels, num_relations))
         self.bns.append(nn.BatchNorm1d(hidden_channels))
 
-        # 중간 레이어들
+        # Middle layers
         for _ in range(num_layers - 2):
             self.convs.append(RGCNConv(hidden_channels, hidden_channels, num_relations))
             self.bns.append(nn.BatchNorm1d(hidden_channels))
 
-        # 마지막 레이어
+        # Final layer
         self.convs.append(RGCNConv(hidden_channels, hidden_channels, num_relations))
         self.bns.append(nn.BatchNorm1d(hidden_channels))
 
@@ -60,7 +60,7 @@ class RGCNEncoder(nn.Module):
 
 class DotProductLinkPredictor(nn.Module):
     """
-    노드 임베딩 h 에 대해 (u, v) 쌍의 dot product 로 링크 존재 확률을 예측.
+    Predict link existence probability via dot product over (u, v) node embeddings h.
     """
 
     def forward(self, h, edge_index):
@@ -86,28 +86,28 @@ class MLPLinkPredictor(nn.Module):
 
 def augment_with_edge_attr(data: Data) -> Data:
     """
-    edge_attr(레이어별 weight)를 노드 단위로 집계하여
-    x에 [relation별 평균 가중치] 피처를 붙인다.
+    Aggregate edge_attr (per-layer weights) to the node level and
+    append [relation-wise mean weight] features to x.
 
-    - data.edge_attr : [E, 1] 혹은 [E]
+    - data.edge_attr : [E, 1] or [E]
     - data.edge_type : [E]
     - data.edge_index: [2, E]
     """
     if not hasattr(data, "edge_attr") or data.edge_attr is None:
-        print("[augment] data.edge_attr 없음 → 스킵")
+        print("[augment] data.edge_attr missing → skip")
         return data
 
     edge_attr = data.edge_attr
     if edge_attr.dim() == 1:
         edge_attr = edge_attr.unsqueeze(-1)
-    edge_attr = edge_attr.float()  # [E, attr_dim] (현재는 attr_dim=1 가정)
+    edge_attr = edge_attr.float()  # [E, attr_dim] (assume attr_dim=1 for now)
 
     edge_index = data.edge_index
     edge_type = data.edge_type
     num_nodes = data.x.size(0)
     num_relations = int(edge_type.max().item()) + 1
 
-    # 1) log1p + clamp 로 값 안정화
+    # 1) Stabilize values with log1p + clamp
     w = torch.log1p(edge_attr[:, 0].clamp(min=0))  # [E]
 
     one_hot_rel = F.one_hot(edge_type, num_classes=num_relations).float()  # [E, R]
@@ -116,17 +116,17 @@ def augment_with_edge_attr(data: Data) -> Data:
     agg = torch.zeros(num_nodes, num_relations, dtype=torch.float32)
     src, dst = edge_index
 
-    # 양 끝 노드 모두에 가중치 더하기 (undirected 근사)
+    # Add weights to both endpoints (approximate undirected)
     agg.index_add_(0, src, weighted_rel)
     agg.index_add_(0, dst, weighted_rel)
 
-    # 2) degree 로 나눠 평균 가중치로 정규화
+    # 2) Normalize by degree to obtain mean weights
     deg = torch.zeros(num_nodes, 1, dtype=torch.float32)
     deg.index_add_(0, src, torch.ones_like(w).unsqueeze(-1))
     deg.index_add_(0, dst, torch.ones_like(w).unsqueeze(-1))
     deg = deg.clamp(min=1.0)
 
-    agg = agg / deg  # node-degree 정규화
+    agg = agg / deg  # degree normalization
 
     old_dim = data.x.size(1)
     data.x = torch.cat([data.x, agg], dim=1)
@@ -146,7 +146,7 @@ def split_edges(
     seed: int = 42,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    양성(존재하는) edge를 train/val/test 로 나눔.
+    Split positive (existing) edges into train/val/test.
     """
     num_edges = edge_index.size(1)
     perm = torch.randperm(num_edges, generator=torch.Generator().manual_seed(seed))
@@ -167,8 +167,8 @@ def sample_negative_edges(
     seed: int = 42,
 ) -> torch.Tensor:
     """
-    존재하지 않는 (u, v) 쌍을 negative edge 로 샘플링.
-    existing_edges 는 (min(u,v), max(u,v)) 튜플의 set 로 가정.
+    Sample non-existent (u, v) pairs as negative edges.
+    existing_edges is assumed to be a set of (min(u,v), max(u,v)) tuples.
     """
     rng = np.random.RandomState(seed)
     neg_edges = []
@@ -192,8 +192,8 @@ def sample_negative_edges_hard_region(
     seed: int = 42,
 ) -> torch.Tensor:
     """
-    같은 region 안에서만 negative edge를 샘플링하는 hard negative 모드.
-    - data.region_mapping 길이만큼 region one-hot이 x의 앞부분에 있다고 가정.
+    Hard-negative mode sampling negative edges only within the same region.
+    - Assumes the first part of x holds region one-hot features of length len(data.region_mapping).
     """
     num_nodes = data.x.size(0)
     num_regions = len(data.region_mapping)
@@ -203,7 +203,7 @@ def sample_negative_edges_hard_region(
     region_oh = x[:, :num_regions]                   # [N, R]
     region_idx = region_oh.argmax(dim=1).cpu().numpy()
 
-    # region별 노드 리스트
+    # Nodes grouped by region
     region_to_nodes: Dict[int, List[int]] = {}
     for i, r in enumerate(region_idx):
         region_to_nodes.setdefault(int(r), []).append(i)
@@ -212,7 +212,7 @@ def sample_negative_edges_hard_region(
     neg_edges = []
 
     while len(neg_edges) < num_samples:
-        # region 하나 선택
+        # Select a region
         r = int(rng.integers(len(region_to_nodes)))
         nodes_in_r = region_to_nodes.get(r, [])
         if len(nodes_in_r) < 2:
@@ -235,8 +235,7 @@ def sample_negative_edges_hard_region(
 
 def build_edge_sets_for_layer(data, layer_name: str, train_ratio=0.7, val_ratio=0.15, seed=42, neg_mode = 'uniform'):
     """
-    특정 layer (예: 'finance', 'communication') 에 대한
-    양성/음성 edge train/val/test 세트 생성.
+    Build positive/negative edge train/val/test splits for a specific layer (e.g., "finance" or "communication").
     """
     edge_index = data.edge_index
     edge_type = data.edge_type
@@ -245,7 +244,7 @@ def build_edge_sets_for_layer(data, layer_name: str, train_ratio=0.7, val_ratio=
     if isinstance(layer_type_mapping, dict):
         target_rel = layer_type_mapping[layer_name]
     else:
-        # dict 가 아닐 경우를 방어적으로 처리
+        # Be defensive if layer_edges is not a dict
         target_rel = int(layer_type_mapping[layer_name])
 
     mask = edge_type == target_rel
@@ -255,7 +254,7 @@ def build_edge_sets_for_layer(data, layer_name: str, train_ratio=0.7, val_ratio=
 
     train_pos, val_pos, test_pos = split_edges(pos_edge_index, train_ratio, val_ratio, seed)
 
-    # 해당 layer 기준 existing edge set 구성 (undirected 가정)
+    # Build existing edge set for the layer (assuming undirected)
     existing = set()
     src_all = pos_edge_index[0].tolist()
     dst_all = pos_edge_index[1].tolist()
@@ -289,7 +288,7 @@ def compute_link_metrics(logits, labels):
     try:
         auc = roc_auc_score(labels_np, probs)
     except ValueError:
-        # 예: 모든 라벨이 0 또는 1인 극단적인 경우
+        # e.g., edge_type contains only 0s or only 1s
         auc = float("nan")
     try:
         ap = average_precision_score(labels_np, probs)
@@ -316,11 +315,11 @@ def train_one_epoch_linkpred(
 
     h = encoder(x, edge_index, edge_type)
 
-    # positive 예측
+    # Positive predictions
     pos_logits = decoder(h, pos_edges.to(device))
     pos_labels = torch.ones(pos_logits.size(0), device=device)
 
-    # negative 예측
+    # Negative predictions
     neg_logits = decoder(h, neg_edges.to(device))
     neg_labels = torch.zeros(neg_logits.size(0), device=device)
 
@@ -370,18 +369,20 @@ def eval_linkpred(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="R-GCN 기반 링크 예측 (특정 layer) 실험 스크립트")
+    parser = argparse.ArgumentParser(
+        description="R-GCN-based link prediction experiment script for a specific layer"
+    )
     parser.add_argument(
         "--data_path",
         type=str,
         required=True,
-        help="PyG Data .pt 파일 경로",
+        help="Path to PyG Data .pt file",
     )
     parser.add_argument(
         "--layer",
         type=str,
         default="finance",
-        help="링크 예측을 수행할 레이어 이름 (예: finance, communication)",
+        help="Layer name for link prediction (e.g., finance, communication)",
     )
     parser.add_argument(
         "--hidden_dim",
@@ -422,20 +423,20 @@ def main():
         "--patience",
         type=int,
         default=50,
-        help="val AUC 기반 early stopping patience",
+        help="Early stopping patience based on val AUC",
     )
     parser.add_argument(
         "--min_delta",
         type=float,
         default=1e-3,
-        help="val AUC 개선 최소 폭",
+        help="Minimum improvement in val AUC to reset patience",
     )
     parser.add_argument(
         "--neg_mode",
         type=str,
         default="uniform",
         choices=["uniform", "hard_region"],
-        help="Negative sampling 모드 (uniform or hard_region)",
+        help="Negative sampling mode (uniform or hard_region)",
     )
 
     args = parser.parse_args()
@@ -447,12 +448,12 @@ def main():
     print(f"[*] Using device: {device}")
 
     # -----------------------------
-    # 데이터 로드
+    # Load data
     # -----------------------------
     print(f"[*] Loading PyG Data from: {args.data_path}")
     data = torch.load(args.data_path, weights_only=False)
 
-    # edge_attr 기반 노드 피처 보강
+    # Augment node features using edge_attr
     data = augment_with_edge_attr(data)
 
     print(data)
@@ -462,7 +463,7 @@ def main():
     num_relations = len(data.layer_type_mapping)
 
     # -----------------------------
-    # layer별 edge 세트 생성
+    # Build edge sets per layer
     # -----------------------------
     (train_pos, val_pos, test_pos), (train_neg, val_neg, test_neg) = build_edge_sets_for_layer(
         data,
@@ -475,7 +476,7 @@ def main():
 
 
     # -----------------------------
-    # 모델 준비
+    # Prepare model
     # -----------------------------
     encoder = RGCNEncoder(
         in_channels=num_features,

@@ -1,12 +1,12 @@
 """
 experiments/train_multitask_gnn.py
 
-멀티태스크 GNN:
-  - Task 1: 역할 분류 (y_role, multi-class)
-  - Task 2: HVT 분류 (y_hvt, binary)
-  - Task 3: importance_score 회귀 (data.importance_score, regression)
+Multitask GNN:
+  - Task 1: role classification (y_role, multi-class)
+  - Task 2: HVT classification (y_hvt, binary)
+  - Task 3: importance_score regression (data.importance_score)
 
-입력:
+Inputs:
   - x           : [N, F]
   - edge_index  : [2, E]
   - edge_type   : [E]
@@ -36,33 +36,33 @@ from torch_geometric.nn import RGCNConv
 
 
 # -----------------------------
-# 유틸 함수
+# Utility helpers
 # -----------------------------
 
 def augment_with_edge_attr(data: Data) -> Data:
     """
-    edge_attr(레이어별 weight)를 노드 단위로 집계하여
-    x에 [relation별 aggregated weight] 피처를 붙인다.
+    Aggregate edge_attr (per-layer weights) to the node level and
+    append [relation-wise aggregated weight] features to x.
 
-    - data.edge_attr : [E, 1] 혹은 [E]
+    - data.edge_attr : [E, 1] or [E]
     - data.edge_type : [E]
     - data.edge_index: [2, E]
     """
     if not hasattr(data, "edge_attr") or data.edge_attr is None:
-        print("[augment] data.edge_attr 없음 → 스킵")
+        print("[augment] data.edge_attr missing → skip")
         return data
 
     edge_attr = data.edge_attr
     if edge_attr.dim() == 1:
         edge_attr = edge_attr.unsqueeze(-1)
-    edge_attr = edge_attr.float()          # [E, attr_dim] (현재는 attr_dim=1 가정)
+    edge_attr = edge_attr.float()          # [E, attr_dim] (assume attr_dim=1 for now)
 
     edge_index = data.edge_index
     edge_type = data.edge_type
     num_nodes = data.x.size(0)
     num_relations = int(edge_type.max().item()) + 1
 
-    w = torch.log1p(edge_attr[:, 0].clamp(min=0))  # 음수 방지
+    w = torch.log1p(edge_attr[:, 0].clamp(min=0))  # avoid negatives
 
     one_hot_rel = F.one_hot(edge_type, num_classes=num_relations).float()
     weighted_rel = one_hot_rel * w.unsqueeze(-1)  # [E, R]
@@ -73,13 +73,13 @@ def augment_with_edge_attr(data: Data) -> Data:
     agg.index_add_(0, src, weighted_rel)
     agg.index_add_(0, dst, weighted_rel)
 
-    # 2) degree 로 나누어 평균값으로
+    # 2) Normalize by degree to take the mean
     deg = torch.zeros(num_nodes, 1, dtype=torch.float32)
     deg.index_add_(0, src, torch.ones_like(w).unsqueeze(-1))
     deg.index_add_(0, dst, torch.ones_like(w).unsqueeze(-1))
     deg = deg.clamp(min=1.0)
 
-    agg = agg / deg  # node-degree 정규화
+    agg = agg / deg  # degree normalization
 
     old_dim = data.x.size(1)
     data.x = torch.cat([data.x, agg], dim=1)
@@ -103,16 +103,16 @@ def get_device():
 
 
 # -----------------------------
-# Multi-task R-GCN 모델 정의
+# Multi-task R-GCN definition
 # -----------------------------
 
 
 class MultiTaskRGCN(nn.Module):
     """
-    공통 R-GCN 인코더 + 3개 헤드:
-      - role_head: 역할 분류 (num_roles-way softmax)
-      - hvt_head : HVT 이진 분류 (sigmoid)
-      - imp_head : importance_score 회귀 (실수)
+    Shared R-GCN encoder + three heads:
+      - role_head: role classification (num_roles-way softmax)
+      - hvt_head : HVT binary classification (sigmoid)
+      - imp_head : importance_score regression (real value)
     """
 
     def __init__(
@@ -125,26 +125,26 @@ class MultiTaskRGCN(nn.Module):
         dropout: float = 0.5,
     ):
         super().__init__()
-        assert num_layers >= 2, "num_layers는 최소 2 이상이어야 합니다."
+        assert num_layers >= 2, "num_layers must be at least 2."
 
         self.convs = nn.ModuleList()
         self.bns = nn.ModuleList()
         self.dropout = dropout
 
-        # 첫 레이어
+        # First layer
         self.convs.append(RGCNConv(in_channels, hidden_channels, num_relations))
         self.bns.append(nn.BatchNorm1d(hidden_channels))
 
-        # 중간 레이어들
+        # Middle layers
         for _ in range(num_layers - 2):
             self.convs.append(RGCNConv(hidden_channels, hidden_channels, num_relations))
             self.bns.append(nn.BatchNorm1d(hidden_channels))
 
-        # 마지막 레이어
+        # Final layer
         self.convs.append(RGCNConv(hidden_channels, hidden_channels, num_relations))
         self.bns.append(nn.BatchNorm1d(hidden_channels))
 
-        ### 멀티태스크 헤드들 ###
+        ### Multitask heads ###
         self.role_head = nn.Sequential(
             nn.Linear(hidden_channels, hidden_channels),
             nn.ReLU(),
@@ -173,7 +173,7 @@ class MultiTaskRGCN(nn.Module):
             out = bn(out)
             out = F.relu(out)
 
-            # residual 연결 (차원이 같을 때만)
+            # Residual connection (only when shapes match)
             if prev is not None and prev.shape == out.shape:
                 out = out + prev
 
@@ -196,7 +196,7 @@ class MultiTaskRGCN(nn.Module):
 
 
 # -----------------------------
-# 학습 / 평가 루프
+# Training / evaluation loop
 # -----------------------------
 
 
@@ -220,16 +220,16 @@ def train_one_epoch(
     edge_type = data.edge_type.to(device)
     y_role = data.y_role.to(device).long()
     y_hvt = data.y_hvt.to(device).float()
-    imp = data.importance_score.to(device).float()   # <- 중요
+    imp = data.importance_score.to(device).float()   # <- important
 
     train_mask = data.train_mask.to(device)
 
     out = model(x, edge_index, edge_type)
     role_logits = out["role_logits"]
     hvt_logits = out["hvt_logits"]
-    imp_pred_norm = out["imp_pred"]                 # <- "정규화된 중요도" 예측으로 해석
+    imp_pred_norm = out["imp_pred"]                 # <- interpreted as "normalized importance" prediction
 
-    # 1) 역할 분류 loss
+    # 1) Role classification loss
     role_loss = F.cross_entropy(role_logits[train_mask], y_role[train_mask])
 
     # 2) HVT loss (BCE + pos_weight)
@@ -237,7 +237,7 @@ def train_one_epoch(
     bce = nn.BCEWithLogitsLoss(pos_weight=pos_w)
     hvt_loss = bce(hvt_logits[train_mask], y_hvt[train_mask])
 
-    # 3) importance 회귀 loss (타겟만 정규화)
+    # 3) Importance regression loss (only targets are normalized)
     imp_norm = (imp - imp_mean) / (imp_std + 1e-8)
     reg_loss = F.mse_loss(imp_pred_norm[train_mask], imp_norm[train_mask])
 
@@ -271,7 +271,7 @@ def evaluate(
     out = model(x, edge_index, edge_type)
     role_logits = out["role_logits"]
     hvt_logits = out["hvt_logits"]
-    imp_pred_norm = out["imp_pred"]              # <- 정규화된 예측
+    imp_pred_norm = out["imp_pred"]              # <- normalized prediction
 
     hvt_probs = torch.sigmoid(hvt_logits)
 
@@ -286,7 +286,7 @@ def evaluate(
         if mask.sum() == 0:
             continue
 
-        # --- 역할 분류 ---
+        # --- Role classification ---
         y_role_true = y_role[mask].cpu().numpy()
         role_log = role_logits[mask]
         role_pred = role_log.argmax(dim=-1).cpu().numpy()
@@ -296,7 +296,7 @@ def evaluate(
             y_role_true, role_pred, average="macro", zero_division=0
         )
 
-        # --- HVT 분류 ---
+        # --- HVT classification ---
         y_hvt_true = y_hvt[mask].cpu().numpy()
         y_hvt_prob = hvt_probs[mask].cpu().numpy()
         y_hvt_pred = (y_hvt_prob > threshold).astype(float)
@@ -308,10 +308,10 @@ def evaluate(
         except ValueError:
             hvt_auc = float("nan")
 
-        # --- importance 회귀 ---
+        # --- importance regression ---
         imp_true = imp[mask].cpu().numpy()
 
-        # 정규화된 예측을 원래 스케일로 되돌림
+        # Denormalize predictions back to the original scale
         imp_pred_norm_split = imp_pred_norm[mask].cpu().numpy()
         imp_pred_denorm = imp_pred_norm_split * (imp_std + 1e-8) + imp_mean
 
@@ -343,7 +343,7 @@ def collect_hvt_probs(
     device: torch.device,
 ):
     """
-    HVT threshold 스윕용: (y_true, y_prob) 수집.
+    Collect (y_true, y_prob) pairs for HVT threshold sweeps.
     """
     model.eval()
 
@@ -387,7 +387,7 @@ def compute_hvt_metrics_at_threshold(y_true, y_prob, threshold: float):
 
 def find_best_threshold_for_f1(y_true, y_prob, num_steps: int = 100):
     """
-    [0.01, 0.99] 구간에서 F1이 최대가 되는 threshold 탐색.
+    Search for the F1-maximizing threshold over the [0.01, 0.99] range.
     """
     best_thr = 0.5
     best_f1 = -1.0
@@ -451,7 +451,7 @@ def plot_training_curves(history, out_dir: str):
     plt.close()
 
 # -----------------------------
-# 메인
+# Main
 # -----------------------------
 
 
@@ -560,7 +560,7 @@ def main():
     torch.serialization.add_safe_globals([PyGData])
     data: Data = torch.load(args.data_path, weights_only=False)
 
-    # edge_attr 기반 노드 피처 보강
+    # Node feature augmentation using edge_attr
     data = augment_with_edge_attr(data)
 
     print(data)
@@ -568,7 +568,7 @@ def main():
     in_channels = data.x.size(1)
     num_relations = int(data.edge_type.max().item()) + 1
 
-    # 역할 개수 파악
+    # Determine number of roles
     num_roles = int(data.y_role.max().item()) + 1
 
     model = MultiTaskRGCN(
@@ -580,7 +580,7 @@ def main():
         dropout=args.dropout,
     ).to(device)
 
-    # importance_score 통계 (train 기준) - build_pyg_dataset 메타 우선 사용
+    # importance_score statistics (train split) - prefer build_pyg_dataset metadata
     if hasattr(data, "imp_mean") and hasattr(data, "imp_std"):
         imp_mean = float(data.imp_mean)
         imp_std = float(data.imp_std)
@@ -597,7 +597,7 @@ def main():
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
 
-    # === 학습 히스토리 기록용 ===
+    # === Record training history ===
     history = {
         "epoch": [],
         "total_loss": [],
@@ -615,7 +615,7 @@ def main():
     best_val_hvt_auc = -1.0
     best_val_hvt_f1_at_05 = None
     best_test_metrics_at_05 = None
-    epochs_no_improve = 0  # <-- early stopping용 카운터 추가
+    epochs_no_improve = 0  # <-- counter for early stopping
 
 
     best_val_hvt_auc = -1.0
@@ -623,7 +623,7 @@ def main():
     best_test_metrics_at_05 = None
 
     # -------------------------
-    # 기본 threshold=0.5 기준 학습 모니터링
+    # Monitor training with default threshold=0.5
     # -------------------------
     for epoch in range(1, args.epochs + 1):
         total_loss, role_loss, hvt_loss, reg_loss = train_one_epoch(
@@ -654,7 +654,7 @@ def main():
 
         val_hvt_auc = val_m.get("hvt_auc", float("nan"))
 
-        # === 히스토리 기록 ===
+        # === History logging ===
         history["epoch"].append(epoch)
         history["total_loss"].append(total_loss)
         history["role_loss"].append(role_loss)
@@ -667,14 +667,14 @@ def main():
         history["val_hvt_auc"].append(val_m.get("hvt_auc", float("nan")))
         history["val_imp_rmse"].append(val_m.get("imp_rmse", float("nan")))
 
-        # === early stopping을 포함한 best val HVT AUC 갱신 ===
+        # === Update best val HVT AUC (with early stopping) ===
         if not np.isnan(val_hvt_auc):
-            # min_delta 만큼 개선되었는지 체크
+            # Check improvement margin against min_delta
             if val_hvt_auc > best_val_hvt_auc + args.min_delta:
                 best_val_hvt_auc = val_hvt_auc
                 best_val_hvt_f1_at_05 = val_m.get("hvt_f1", float("nan"))
                 best_test_metrics_at_05 = test_m
-                epochs_no_improve = 0  # 개선되었으므로 카운터 리셋
+                epochs_no_improve = 0  # reset counter on improvement
             else:
                 epochs_no_improve += 1
 
@@ -689,7 +689,7 @@ def main():
                 f"val_imp_rmse={val_m.get('imp_rmse', float('nan')):.3f}"
             )
 
-        # === early stopping 조건 체크 ===
+        # === Check early stopping condition ===
         if args.patience > 0 and epochs_no_improve >= args.patience:
             print(
                 f"\n[*] Early stopping triggered at epoch {epoch} "
@@ -720,7 +720,7 @@ def main():
         )
 
     # -------------------------
-    # HVT에 대해서만, 검증셋 기반 threshold 스윕 (F1 최대화)
+    # Validation-set threshold sweep for HVT only (maximize F1)
     # -------------------------
     print("\n[*] Sweeping threshold on validation set to maximize HVT F1...")
 
@@ -735,7 +735,7 @@ def main():
         f"val_auc={best_val_hvt_metrics['auc']:.3f}"
     )
 
-    # 해당 threshold로 train/test HVT 성능 재계산
+    # Recompute train/test HVT performance with that threshold
     train_y, train_p = probs_dict["train"]
     test_y, test_p = probs_dict["test"]
 
@@ -755,9 +755,9 @@ def main():
     )
 
     # -------------------------
-    # 학습 곡선 시각화
+    # Plot training curves
     # -------------------------
-    # data_path 기준으로 기본 출력 디렉토리 설정
+    # Use data_path to define the default output directory
     default_plot_dir = os.path.join(
         os.path.dirname(args.data_path),
         "multitask_plots"
@@ -785,7 +785,7 @@ def main():
         "alpha_hvt": args.alpha_hvt,
         "alpha_imp": args.alpha_imp,
         "best_val_hvt_auc": float(best_val_hvt_auc),
-        # threshold=0.5에서, best val HVT AUC 시점의 test(멀티태스크 전체) 성능
+        # Test metrics for the multitask model at best val HVT AUC with threshold=0.5
         "fixed_threshold": {
             "threshold": 0.5,
             "val_hvt_auc": float(best_val_hvt_auc),
@@ -796,7 +796,7 @@ def main():
             if best_test_metrics_at_05 is not None
             else None,
         },
-        # HVT에 대해서만 threshold 스윕으로 얻은 결과
+        # Threshold-swept results for HVT only
         "hvt_threshold_tuned": {
             "best_thr": float(best_thr),
             "val": _to_float_dict(best_val_hvt_metrics),
