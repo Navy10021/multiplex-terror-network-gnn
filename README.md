@@ -36,26 +36,6 @@ A **purpose-built research sandbox** for disruption and risk analysis on **purel
 
 ---
 
-## Table of Contents
-
-- [Motivation](#-motivation)
-- [Highlights](#-highlights)
-- [Project Structure](#-project-structure)
-- [Installation](#-installation)
-- [Quick Start](#-quick-start)
-- [Outputs](#-outputs)
-- [Example Results](#-example-results-summary)
-- [Reproducing Summary Plots](#-reproducing-summary-plots)
-- [Configuration](#-configuration-generator-knobs)
-- [Smoke Tests](#-smoke-tests--ci)
-- [Extending the Framework](#-extending-the-framework)
-- [Ethical Considerations](#-ethical-considerations)
-- [License](#-license)
-- [Citation](#-citation)
-- [Contact](#-contact)
-
----
-
 ## 🧠 Motivation
 
 Operational terrorist/extremist networks are difficult to study rigorously because they are often:
