@@ -19,8 +19,7 @@ Synthetic multiplex terrorist networks and multi-task GNNs for high-value target
   - `easy` / `baseline` / `hard` (controlled structural noise & randomness)
 - All experiments are fully reproducible via small command-line scripts.
 
--One-line summary:
-Generate 5-layer multiplex terrorist networks and train multi-task GNN baselines for HVT detection, role classification, and link prediction.
+- **One-line summary**: Generate 5-layer multiplex terrorist networks and train multi-task GNN baselines for HVT detection, role classification, and link prediction.
 
 ---
 
@@ -171,32 +170,57 @@ End-to-end in three steps (works for `easy`, `baseline`, or `hard`).
 1) **Generate a multiplex graph**
 ```bash
 python src/data/multiplex_generator_v2.py \
-  --config configs/generator_easy.json \
-  --out_dir data/multiplex_easy
+  --config configs/generator_baseline.json \
+  --out_dir data/multiplex_baseline
 ```
 
 2) **Convert to a PyG dataset**
 ```bash
 python src/data/build_pyg_dataset.py \
-  --manifest data/multiplex_easy/multiplex.json \
-  --out_path data/multiplex_easy/pyg_data.pt
+  --manifest data/multiplex_baseline/multiplex.json \
+  --out_path data/multiplex_baseline/pyg_data.pt
 ```
 
 3) **Train models**
 - Multi-task HVT + role + importance
   ```bash
   python src/models/train_multitask_gnn.py \
-    --data_path data/multiplex_easy/pyg_data.pt \
-    --hidden_dim 128 --num_layers 3 --epochs 300
+    --data_path data/multiplex_baseline/pyg_data.pt \
+    --hidden_dim 64 --num_layers 3 --epochs 500
   ```
 - Layer-wise link prediction (finance or communication) with hard-negative sampling
   ```bash
   python src/models/train_linkpred_layer.py \
-    --data_path data/multiplex_easy/pyg_data.pt \
-    --layer finance --neg_mode hard_region --epochs 200
+    --data_path data/multiplex_baseline/pyg_data.pt \
+    --layer finance --neg_mode hard_region --epochs 500
   ```
 
 Artifacts are stored next to the dataset (metrics JSON, training curves, link AUC/AP). Repeat with `configs/generator_baseline.json` or `configs/generator_hard.json` to sweep difficulty.
+
+## 🧪 Smoke Tests & CI
+- Run a minimal end-to-end pipeline (generator → PyG dataset) to catch regressions quickly:
+  ```bash
+  pytest tests/test_smoke_pipeline.py::test_generate_and_build_pyg_roundtrip
+  ```
+- This uses a small graph (120 nodes) and exercises v2 generator defaults, data conversion, masks, and tensor outputs. It is safe to run locally or in CI as a lightweight sanity check.
+
+## 🗂️ Results & Logging Conventions
+- Recommended layout for experiment outputs:
+  ```text
+  results/
+    <difficulty>/          # easy | baseline | hard
+      multitask/           # multi-task encoder runs
+        <run_name>/
+          metrics.json     # loss/accuracy/F1 per split
+          curves.png       # optional training curves
+      linkpred_finance/
+        <run_name>/        # finance layer link prediction
+          metrics.json
+      linkpred_comm/
+        <run_name>/        # communication layer link prediction
+          metrics.json
+  ```
+- When launching training scripts, set `--output_dir` or similar arguments to follow this structure so runs remain comparable across difficulty levels and model types.
 
 ## 📊 Example Results (Summary)
 Reference runs from `results/summary_all/multitask_linkpred_summary.csv`:
@@ -223,6 +247,12 @@ Reference runs from `results/summary_all/multitask_linkpred_summary.csv`:
 No explicit license is provided yet. For usage beyond personal or academic experimentation, please contact the maintainer.
 
 ## 📚 Citation
+
+If you use this codebase in research, please cite the repository (or open an issue for a formal BibTeX entry):
+
+```
+Yunseob, I. (2025). Multiplex Terror Network GNN (GitHub repository). https://github.com/Navy10021/multiplex-terror-network-gnn
+```
 
 If you use this codebase in research, please cite the repository (or open an issue for a formal BibTeX entry):
 
