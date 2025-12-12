@@ -19,8 +19,8 @@ Synthetic multiplex terrorist networks and multi-task GNNs for high-value target
   - `easy` / `baseline` / `hard` (controlled structural noise & randomness)
 - All experiments are fully reproducible via small command-line scripts.
 
-한국어 한 줄 요약:  
-5레이어 멀티플렉스 테러 네트워크를 합성하고, HVT 탐지·역할 분류·링크 예측을 위한 멀티태스크 GNN 실험 코드를 제공합니다.
+-One-line summary:
+Generate 5-layer multiplex terrorist networks and train multi-task GNN baselines for HVT detection, role classification, and link prediction.
 
 ---
 
