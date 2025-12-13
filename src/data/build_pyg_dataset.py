@@ -1,24 +1,22 @@
 """
-./data/build_pyg_dataset.py
+src/data/build_pyg_dataset.py
 
-Convert synthetic terror multiplex data produced by multiplex_generator.py
-into a PyTorch Geometric Data object.
+Convert synthetic multiplex terror network data (v1 or v2) into a PyTorch Geometric `Data` object.
 
-Outputs:
-  - Single homogeneous graph Data:
-      * x           : [num_nodes, num_features] node features
-      * edge_index  : [2, num_edges] (concatenated edges from all layers)
-      * edge_type   : [num_edges] (0=hier, 1=finance, 2=comm, 3=ops, 4=ideo)
-      * edge_attr   : [num_edges, 1] (layer-specific scalar weight: amount, similarity, etc.)
-      * y_role      : [num_nodes] (int, role class index)
-      * y_hvt       : [num_nodes] (int, 0/1 high_value_target)
-      * train_mask / val_mask / test_mask : [num_nodes] boolean masks
-      * node_id     : list[str], original node IDs stored directly on the Data object
+Outputs (single homogeneous graph):
+  - x           : [N, F] node features
+  - edge_index  : [2, E] edges (concatenated from all layers)
+  - edge_type   : [E] relation type index (0=hier, 1=finance, 2=comm, 3=ops, 4=ideo)
+  - edge_attr   : [E, 1] scalar edge weight per edge (amount / num_events / joint_ops / similarity / 1.0)
+  - y_role      : [N] role class index
+  - y_hvt       : [N] high_value_target (0/1)
+  - train_mask / val_mask / test_mask : [N] boolean masks (node-level split)
+  - metadata fields attached directly to `Data`:
+      node_id, role_mapping, region_mapping, group_mapping, layer_type_mapping,
+      importance_score, imp_mean, imp_std, generator_meta, generator_config
 
-Example (Colab):
-  !python data/build_pyg_dataset.py \
-      --manifest ./data/multiplex_v1_1/multiplex.json \
-      --out_path ./data/multiplex_v1_1/pyg_data.pt
+Key reproducibility improvement:
+  - node split is now deterministic using `--split_seed` (default: manifest meta.seed if present, else 42).
 """
 
 from __future__ import annotations
@@ -26,7 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -55,13 +53,15 @@ def load_multiplex(manifest_path: str):
 
     v2 format (example produced by multiplex_generator_v2.py):
       {
+        "meta": { ... },
         "nodes": [ { ... }, { ... }, ... ],      # node info inline as a JSON list
         "layers": {
           "hierarchy": { "directed": true,  "edges": [ {...}, ... ] },
-          "finance":   { "directed": false, "edges": [ {...}, ... ] },
+          "finance":   { "directed": true,  "edges": [ {...}, ... ] },
+          "communication": { "directed": false, "edges": [ {...}, ... ] },
           ...
         },
-        "events": [ ... ],   # may or may not exist (not used in PyG conversion)
+        "events": [ ... ],   # optional (not used in PyG conversion)
         ...
       }
     """
@@ -75,7 +75,6 @@ def load_multiplex(manifest_path: str):
 
     # (A) v1 style: CSV path string
     if isinstance(nodes_raw, str):
-        # same handling as original code
         nodes = pd.read_csv(nodes_raw)
         labels_path = mani.get("labels")
         if labels_path is None:
@@ -99,19 +98,16 @@ def load_multiplex(manifest_path: str):
             if col not in df_nodes.columns:
                 raise ValueError(f"Required column '{col}' missing in nodes.")
 
-        # v2 likely already includes skill_level, radicalization, past_incidents,
-        # importance_score, high_value_target in the nodes list.
         # Fill with defaults if any are missing so conversion still works.
-        if "skill_level" not in df_nodes.columns:
-            df_nodes["skill_level"] = 0.0
-        if "radicalization" not in df_nodes.columns:
-            df_nodes["radicalization"] = 0.0
-        if "past_incidents" not in df_nodes.columns:
-            df_nodes["past_incidents"] = 0.0
-        if "importance_score" not in df_nodes.columns:
-            df_nodes["importance_score"] = 0.0
-        if "high_value_target" not in df_nodes.columns:
-            df_nodes["high_value_target"] = 0
+        for col, default in [
+            ("skill_level", 0.0),
+            ("radicalization", 0.0),
+            ("past_incidents", 0.0),
+            ("importance_score", 0.0),
+            ("high_value_target", 0),
+        ]:
+            if col not in df_nodes.columns:
+                df_nodes[col] = default
 
         # mimic the v1 nodes.csv / labels.csv split
         nodes = df_nodes[["node_id", "role", "region", "group"]].copy()
@@ -136,7 +132,7 @@ def load_multiplex(manifest_path: str):
     # 2) handle layers
     # --------------------------------------------------
     layers: Dict[str, pd.DataFrame] = {}
-    raw_layers = mani.get("layers", {})
+    raw_layers = mani.get("layers", {}) or {}
 
     for layer_name, layer_obj in raw_layers.items():
         # (A) v1 style: CSV path string
@@ -146,15 +142,15 @@ def load_multiplex(manifest_path: str):
         # (B) v2 style: {"directed": bool, "edges": [ {...}, ... ]}
         elif isinstance(layer_obj, dict) and "edges" in layer_obj:
             df_layer = pd.DataFrame(layer_obj["edges"])
+            if df_layer.empty:
+                layers[layer_name] = df_layer
+                continue
 
             # build_pyg_dataset expects at least source/target for each layer
             if "source" not in df_layer.columns or "target" not in df_layer.columns:
                 raise ValueError(
                     f"Layer '{layer_name}' requires 'source' and 'target' columns."
                 )
-
-            # amount / num_events / joint_ops / similarity are used if present;
-            # otherwise build_pyg_data() falls back to get("...", 1.0).
             layers[layer_name] = df_layer
 
         else:
@@ -167,36 +163,16 @@ def load_multiplex(manifest_path: str):
 
 def validate_split_ratios(train_ratio: float, val_ratio: float, test_ratio: float, tol: float = 1e-6) -> None:
     """Validate that the provided split ratios are non-negative and sum to 1.0."""
-
     ratios = [train_ratio, val_ratio, test_ratio]
     if any(r < 0 for r in ratios):
         raise ValueError("train/val/test ratios must be non-negative.")
-
     total = train_ratio + val_ratio + test_ratio
     if abs(total - 1.0) > tol:
         raise ValueError("train/val/test ratios must sum to 1.0.")
 
 
-def validate_split_ratios(train_ratio: float, val_ratio: float, test_ratio: float, tol: float = 1e-6) -> None:
-    """Validate that the provided split ratios are non-negative and sum to 1.0."""
-
-    ratios = [train_ratio, val_ratio, test_ratio]
-    if any(r < 0 for r in ratios):
-        raise ValueError("train/val/test ratios must be non-negative.")
-
-    total = train_ratio + val_ratio + test_ratio
-    if abs(total - 1.0) > tol:
-        raise ValueError("train/val/test ratios must sum to 1.0.")
-
-
-
-def encode_categorical(
-    series: pd.Series,
-) -> Tuple[np.ndarray, Dict[str, int]]:
-    """
-    Encode a categorical series into 0..C-1 indices and
-    return (index_array, mapping).
-    """
+def encode_categorical(series: pd.Series) -> Tuple[np.ndarray, Dict[str, int]]:
+    """Encode a categorical series into 0..C-1 indices and return (indices, mapping)."""
     uniques = sorted(series.unique().tolist())
     mapping = {v: i for i, v in enumerate(uniques)}
     idx = series.map(mapping).astype(int).to_numpy()
@@ -213,22 +189,49 @@ def one_hot(indices: np.ndarray, num_classes: int) -> np.ndarray:
 # Main conversion logic
 # -----------------------------
 
+def _default_split_seed_from_manifest(mani: dict) -> int:
+    """
+    Priority:
+      1) meta.seed (preferred, since it reflects the generator CLI seed)
+      2) meta.config.seed (if present)
+      3) fallback = 42
+    """
+    meta = mani.get("meta", {}) or {}
+    if isinstance(meta, dict):
+        if "seed" in meta and meta["seed"] is not None:
+            try:
+                return int(meta["seed"])
+            except Exception:
+                pass
+        cfg = meta.get("config", {}) or {}
+        if isinstance(cfg, dict) and "seed" in cfg and cfg["seed"] is not None:
+            try:
+                return int(cfg["seed"])
+            except Exception:
+                pass
+    return 42
+
 
 def build_pyg_data(
     manifest_path: str,
     train_ratio: float = 0.7,
     val_ratio: float = 0.15,
     test_ratio: float = 0.15,
+    split_seed: Optional[int] = None,
 ) -> Data:
     """
-    Read multiplex.json and construct PyG Data.
+    Read multiplex.json and construct a PyG `Data`.
+
+    split_seed:
+      - if provided, used for deterministic node split.
+      - if None, uses manifest meta.seed (or meta.config.seed) when available.
     """
     validate_split_ratios(train_ratio, val_ratio, test_ratio)
 
     mani, nodes, labels, layers = load_multiplex(manifest_path)
 
     # -------------------------
-    # 1. node index mapping
+    # 1) node index mapping
     # -------------------------
     node_ids = nodes["node_id"].tolist()
     num_nodes = len(node_ids)
@@ -237,17 +240,13 @@ def build_pyg_data(
     # merge labels.csv with nodes to consolidate role/region/group/importance_score/hvt
     df = nodes.merge(labels, on=["node_id", "role", "region", "group"], how="left")
 
-
     # -------------------------
-    # 2. build node features
-    #    - categorical: region, group → one-hot  (role is used only as a label)
-    #    - continuous: skill_level, radicalization, past_incidents
+    # 2) build node features
     # -------------------------
     role_idx, role_map = encode_categorical(df["role"])
     region_idx, region_map = encode_categorical(df["region"])
     group_idx, group_map = encode_categorical(df["group"])
 
-    # role_oh = one_hot(role_idx, len(role_map))  # <- no longer included in x
     region_oh = one_hot(region_idx, len(region_map))
     group_oh = one_hot(group_idx, len(group_map))
 
@@ -256,28 +255,23 @@ def build_pyg_data(
         if col not in df.columns:
             raise ValueError(f"Continuous feature column {col} is missing in the DataFrame.")
 
-    
     cont_feats = df[cont_cols].to_numpy(dtype=np.float32)
     cont_mean = cont_feats.mean(axis=0, keepdims=True)
     cont_std = cont_feats.std(axis=0, keepdims=True) + 1e-8
     cont_feats = (cont_feats - cont_mean) / cont_std
-    
+
     x_np = np.concatenate([region_oh, group_oh, cont_feats], axis=1)
-    x = torch.from_numpy(x_np) 
-
+    x = torch.from_numpy(x_np)
 
     # -------------------------
-    # 3. build labels
-    #    - y_role: role index
-    #    - y_hvt: high_value_target (0/1)
+    # 3) build labels
     # -------------------------
-    y_role = torch.from_numpy(role_idx.astype(np.int64))          # [num_nodes]
+    y_role = torch.from_numpy(role_idx.astype(np.int64))
     y_hvt = torch.from_numpy(df["high_value_target"].astype(np.int64).to_numpy())
 
     # -------------------------
-    # 4. construct edge_index / edge_type / edge_attr
+    # 4) edges
     # -------------------------
-    # map layer name to type index
     layer_type_map = {
         "hierarchy": 0,
         "finance": 1,
@@ -296,6 +290,8 @@ def build_pyg_data(
 
         if df_layer is None or df_layer.empty:
             return
+        if layer_name not in layer_type_map:
+            return
 
         ltype = layer_type_map[layer_name]
 
@@ -313,21 +309,15 @@ def build_pyg_data(
             edge_dst.append(vi)
             edge_type_list.append(ltype)
 
-            # edge_attr: choose a meaningful scalar weight per layer
             if layer_name == "hierarchy":
-                # keep relation(superior/informal) as 1.0 instead of encoding
                 w = 1.0
             elif layer_name == "finance":
-                # use amount
                 w = float(row.get("amount", 1.0))
             elif layer_name == "communication":
-                # use num_events
                 w = float(row.get("num_events", 1.0))
             elif layer_name == "operation":
-                # use joint_ops
                 w = float(row.get("joint_ops", 1.0))
             elif layer_name == "ideology":
-                # use similarity
                 w = float(row.get("similarity", 1.0))
             else:
                 w = 1.0
@@ -335,25 +325,24 @@ def build_pyg_data(
             edge_attr_vals.append(w)
 
     for lname in ["hierarchy", "finance", "communication", "operation", "ideology"]:
-        if lname not in layers:
-            continue
-        _add_edges_from_layer(lname, layers[lname])
+        if lname in layers:
+            _add_edges_from_layer(lname, layers[lname])
 
-    edge_index = torch.tensor(
-        [edge_src, edge_dst], dtype=torch.long
-    )  # [2, num_edges]
-    edge_type = torch.tensor(edge_type_list, dtype=torch.long)   # [num_edges]
-    edge_attr = torch.tensor(edge_attr_vals, dtype=torch.float32).view(-1, 1)  # [num_edges, 1]
+    edge_index = torch.tensor([edge_src, edge_dst], dtype=torch.long)
+    edge_type = torch.tensor(edge_type_list, dtype=torch.long)
+    edge_attr = torch.tensor(edge_attr_vals, dtype=torch.float32).view(-1, 1)
 
     # -------------------------
-    # 5. create train/val/test masks (node-level)
+    # 5) deterministic node split
     # -------------------------
-    num_nodes = x.size(0)
-    perm = torch.randperm(num_nodes)
+    if split_seed is None:
+        split_seed = _default_split_seed_from_manifest(mani)
+
+    gen = torch.Generator().manual_seed(int(split_seed))
+    perm = torch.randperm(num_nodes, generator=gen)
 
     n_train = int(train_ratio * num_nodes)
     n_val = int(val_ratio * num_nodes)
-    n_test = num_nodes - n_train - n_val
 
     train_idx = perm[:n_train]
     val_idx = perm[n_train:n_train + n_val]
@@ -369,20 +358,19 @@ def build_pyg_data(
 
     # importance_score train statistics (mean/std)
     imp_np = df["importance_score"].to_numpy(dtype=np.float32)
-    # convert train_idx tensor to numpy-compatible indexing
     train_idx_np = train_idx.cpu().numpy() if hasattr(train_idx, "cpu") else train_idx.numpy()
     imp_train = imp_np[train_idx_np]
     if imp_train.size > 0:
         imp_mean = float(imp_train.mean())
         imp_std = float(imp_train.std())
     else:
-        # fallback to global stats if train is unexpectedly empty
         imp_mean = float(imp_np.mean())
         imp_std = float(imp_np.std())
-    print(f"[*] importance_score train mean={imp_mean:.3f}, std={imp_std:.3f}")
+
+    print(f"[*] split_seed={split_seed} | importance_score train mean={imp_mean:.3f}, std={imp_std:.3f}")
 
     # -------------------------
-    # 6. assemble Data object
+    # 6) assemble Data
     # -------------------------
     data = Data(
         x=x,
@@ -396,67 +384,40 @@ def build_pyg_data(
         test_mask=test_mask,
     )
 
-
-    # attach metadata such as original node_id / mappings / importance_score
     data.node_id = node_ids
     data.role_mapping = role_map
     data.region_mapping = region_map
     data.group_mapping = group_map
     data.layer_type_mapping = layer_type_map
 
-    # add importance_score tensor (float32)
-    data.importance_score = torch.from_numpy(
-        df["importance_score"].to_numpy(dtype=np.float32)
-    )
-    # store importance_score train statistics (mean/std) as metadata
+    data.importance_score = torch.from_numpy(df["importance_score"].to_numpy(dtype=np.float32))
     data.imp_mean = float(imp_mean)
     data.imp_std = float(imp_std)
+
+    data.generator_meta = mani.get("meta", {}) or {}
+    meta = data.generator_meta if isinstance(data.generator_meta, dict) else {}
+    data.generator_config = meta.get("config", {}) if isinstance(meta, dict) else {}
 
     return data
 
 
-# -----------------------------
-# CLI
-# -----------------------------
-
-
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert multiplex synthetic terror dataset to PyTorch Geometric Data."
+        description="Convert multiplex synthetic dataset to a PyTorch Geometric Data object."
     )
+    parser.add_argument("--manifest", type=str, required=True, help="Path to multiplex.json from the generator")
+    parser.add_argument("--out_path", type=str, required=True, help="Output .pt file path to save PyG Data")
+    parser.add_argument("--train_ratio", type=float, default=0.7, help="Training node ratio (default: 0.7)")
+    parser.add_argument("--val_ratio", type=float, default=0.15, help="Validation node ratio (default: 0.15)")
+    parser.add_argument("--test_ratio", type=float, default=0.15, help="Test node ratio (default: 0.15)")
     parser.add_argument(
-        "--manifest",
-        type=str,
-        required=True,
-        help="Path to multiplex.json from multiplex_generator.py",
-    )
-    parser.add_argument(
-        "--out_path",
-        type=str,
-        required=True,
-        help="Output .pt file path to save PyG Data",
-    )
-    parser.add_argument(
-        "--train_ratio",
-        type=float,
-        default=0.7,
-        help="Training node ratio (default: 0.7)",
-    )
-    parser.add_argument(
-        "--val_ratio",
-        type=float,
-        default=0.15,
-        help="Validation node ratio (default: 0.15)",
-    )
-    parser.add_argument(
-        "--test_ratio",
-        type=float,
-        default=0.15,
-        help="Test node ratio (default: 0.15)",
+        "--split_seed",
+        type=int,
+        default=None,
+        help="Seed for deterministic node split. Default: manifest meta.seed (or 42 if missing).",
     )
 
     args = parser.parse_args()
-
     os.makedirs(os.path.dirname(args.out_path), exist_ok=True)
 
     print("[*] Building PyG Data from:", args.manifest)
@@ -465,6 +426,7 @@ def main():
         train_ratio=args.train_ratio,
         val_ratio=args.val_ratio,
         test_ratio=args.test_ratio,
+        split_seed=args.split_seed,
     )
 
     torch.save(data, args.out_path)

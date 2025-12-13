@@ -1,60 +1,94 @@
 import argparse
 import json
 import os
-from typing import Dict, Any, List
+import re
+from typing import Dict, Any, List, Tuple, Optional
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
 
+# --------------------------
+# Helpers
+# --------------------------
+
 def safe_get(d: Dict[str, Any], *keys, default=None):
     """
     Helper to safely retrieve values from nested dictionaries.
     Returns default if any key is missing.
     """
-    cur = d
+    cur: Any = d
     for k in keys:
-        if cur is None:
-            return default
-        if not isinstance(cur, dict):
+        if cur is None or not isinstance(cur, dict):
             return default
         cur = cur.get(k, None)
     return cur if cur is not None else default
 
 
-def load_multitask_metrics(run_dir: str) -> Dict[str, Any]:
+def _read_json(path: str) -> Optional[Dict[str, Any]]:
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[!] Failed to read json: {path} ({e})")
+        return None
+
+
+def _float_or_nan(v: Any) -> float:
+    try:
+        if v is None:
+            return float("nan")
+        return float(v)
+    except Exception:
+        return float("nan")
+
+
+def _parse_seed_from_name(run_name: str) -> Optional[int]:
+    """
+    Try to parse a seed from folder name.
+    Examples:
+      - multiplex_easy_seed2025 -> 2025
+      - ..._s2025 -> 2025
+    """
+    m = re.search(r"(?:seed|s)(\d{1,6})", run_name)
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            return None
+    return None
+
+
+# --------------------------
+# Loading per-run artifacts
+# --------------------------
+
+def load_multitask_metrics(run_dir: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Load multitask_metrics.json in run_dir and extract key test metrics.
-    - HVT: tuned threshold (hvt_threshold_tuned) test f1/auc
-    - Role/Importance: fixed_threshold.test values
+    Returns:
+      - metrics (flat floats for plotting)
+      - raw json object (for provenance fields)
     """
     mt_path = os.path.join(run_dir, "multitask_metrics.json")
-    if not os.path.exists(mt_path):
+    mt = _read_json(mt_path)
+    if mt is None:
         print(f"[!] multitask_metrics.json not found in {run_dir}")
-        return {}
+        return {}, {}
 
-    with open(mt_path, "r") as f:
-        mt = json.load(f)
-
-    # 1) HVT: threshold-tuned results (acc/f1/auc)
-    tuned_test = safe_get(mt, "hvt_threshold_tuned", "test", default={})
-    hvt_f1 = tuned_test.get("f1", np.nan)
-    hvt_auc = tuned_test.get("auc", np.nan)
-
-    # 2) Role / Importance: multitask metrics at threshold=0.5
-    fixed_test = safe_get(mt, "fixed_threshold", "test", default={})
-    role_f1_macro = fixed_test.get("role_f1_macro", np.nan)
-    imp_r2 = fixed_test.get("imp_r2", np.nan)
+    tuned_test = safe_get(mt, "hvt_threshold_tuned", "test", default={}) or {}
+    fixed_test = safe_get(mt, "fixed_threshold", "test", default={}) or {}
 
     metrics = {
-        "hvt_f1": float(hvt_f1) if hvt_f1 is not None else np.nan,
-        "hvt_auc": float(hvt_auc) if hvt_auc is not None else np.nan,
-        "role_f1_macro": float(role_f1_macro) if role_f1_macro is not None else np.nan,
-        "imp_r2": float(imp_r2) if imp_r2 is not None else np.nan,
+        "hvt_f1": _float_or_nan(tuned_test.get("f1", np.nan)),
+        "hvt_auc": _float_or_nan(tuned_test.get("auc", np.nan)),
+        "role_f1_macro": _float_or_nan(fixed_test.get("role_f1_macro", np.nan)),
+        "imp_r2": _float_or_nan(fixed_test.get("imp_r2", np.nan)),
     }
-    return metrics
-
+    return metrics, mt
 
 
 def load_linkpred_metrics(run_dir: str, layer: str, neg_mode: str) -> Dict[str, Any]:
@@ -63,105 +97,146 @@ def load_linkpred_metrics(run_dir: str, layer: str, neg_mode: str) -> Dict[str, 
     test_at_best_val_auc AUC/AP.
     """
     fname = f"linkpred_{layer}_{neg_mode}.json"
-    metrics_path = os.path.join(run_dir, fname)
-    if not os.path.exists(metrics_path):
+    obj = _read_json(os.path.join(run_dir, fname))
+    if obj is None:
         print(f"[!] {fname} not found in {run_dir}")
         return {"auc": np.nan, "ap": np.nan}
 
-    with open(metrics_path, "r") as f:
-        obj = json.load(f)
-
     test = obj.get("test_at_best_val_auc", {}) or {}
-
-    def get_float(key: str):
-        v = test.get(key, np.nan)
-        try:
-            return float(v)
-        except Exception:
-            return np.nan
-
     return {
-        "auc": get_float("auc"),
-        "ap": get_float("ap"),
+        "auc": _float_or_nan(test.get("auc", np.nan)),
+        "ap": _float_or_nan(test.get("ap", np.nan)),
     }
 
 
-def load_generator_config(run_dir: str) -> Dict[str, Any]:
+def load_generator_config(run_dir: str, mt_raw: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
-    Read multiplex.json(meta.config) in run_dir to capture generator settings
-    such as finance_structure_strength, comm_structure_strength, comm_randomness, etc.
-    Fill NaN when missing.
+    Prefer config snapshot embedded into multitask_metrics.json (if available),
+    else fall back to multiplex.json(meta.config).
     """
-    manifest_path = os.path.join(run_dir, "multiplex.json")
-    if not os.path.exists(manifest_path):
-        print(f"[!] multiplex.json not found in {run_dir}")
-        return {
-            "finance_structure_strength": np.nan,
-            "comm_structure_strength": np.nan,
-            "comm_randomness": np.nan,
-            "hvt_ratio": np.nan,
-        }
+    cfg: Dict[str, Any] = {}
 
-    with open(manifest_path, "r") as f:
-        manifest = json.load(f)
+    if mt_raw:
+        mt_cfg = mt_raw.get("generator_config", None)
+        if isinstance(mt_cfg, dict):
+            cfg = mt_cfg
 
-    cfg = safe_get(manifest, "meta", "config", default={})
-    return {
-        "finance_structure_strength": cfg.get("finance_structure_strength", np.nan),
-        "comm_structure_strength": cfg.get("comm_structure_strength", np.nan),
-        "comm_randomness": cfg.get("comm_randomness", np.nan),
-        "hvt_ratio": cfg.get("hvt_ratio", np.nan),
-    }
+    if not cfg:
+        manifest = _read_json(os.path.join(run_dir, "multiplex.json")) or {}
+        cfg = safe_get(manifest, "meta", "config", default={}) or {}
+
+    # normalize to a fixed set of keys (so CSV columns are consistent)
+    keys = [
+        "finance_structure_strength",
+        "comm_structure_strength",
+        "comm_randomness",
+        "hvt_ratio",
+        "finance_w_group",
+        "finance_w_region",
+        "finance_w_ideo",
+        "finance_w_tier_dist",
+        "finance_base_bias",
+        "comm_avg_degree",
+        "comm_alpha0",
+        "comm_alpha_group",
+        "comm_alpha_region",
+        "comm_alpha_hier",
+        "comm_alpha_fin",
+        "ideo_threshold",
+        "op_num_cells",
+        "op_cell_size",
+    ]
+    out = {k: (_float_or_nan(cfg.get(k)) if k in cfg else np.nan) for k in keys}
+    return out
 
 
-def infer_difficulty_label(run_name: str) -> str:
-    """
-    Infer difficulty label from folder name.
-    Example: multiplex_easy / multiplex_baseline / multiplex_hard
-    """
-    name = run_name.lower()
-    if "easy" in name:
+# --------------------------
+# Difficulty inference / checks
+# --------------------------
+
+def infer_difficulty_from_folder(run_name: str) -> str:
+    low = run_name.lower()
+    if "easy" in low:
         return "easy"
-    if "baseline" in name:
-        return "baseline"
-    if "hard" in name:
+    if "hard" in low:
         return "hard"
-    return run_name  # keep as-is if no rule matches
+    if "base" in low or "baseline" in low:
+        return "baseline"
+    return "unknown"
 
 
-def difficulty_sort_key(label: str) -> int:
+def infer_difficulty_from_config(cfg: Dict[str, Any]) -> str:
     """
-    Define sorting order for difficulty labels.
-    easy -> baseline -> hard -> everything else
+    Heuristic mapping based on the intended presets:
+      - easy: higher structure strengths and low randomness
+      - hard: lower structure strengths and/or higher randomness
+      - baseline: middle
     """
-    l = label.lower()
-    if "easy" in l:
-        return 0
-    if "baseline" in l:
-        return 1
-    if "hard" in l:
-        return 2
-    return 99
+    f = cfg.get("finance_structure_strength", np.nan)
+    c = cfg.get("comm_structure_strength", np.nan)
+    r = cfg.get("comm_randomness", np.nan)
+
+    # NaN-safe comparisons
+    if np.isfinite(r) and r >= 0.2:
+        return "hard"
+    if np.isfinite(f) and np.isfinite(c):
+        if f >= 1.1 and c >= 1.1:
+            return "easy"
+        if f <= 0.8 or c <= 0.8:
+            return "hard"
+        return "baseline"
+    return "unknown"
 
 
-def build_summary_dataframe(run_dirs: List[str]) -> pd.DataFrame:
-    """
-    Combine multitask + link prediction metrics + generator settings
-    from multiple run directories into one DataFrame.
-    """
-    rows = []
+def difficulty_sort_key(diff: str) -> int:
+    order = {"easy": 0, "baseline": 1, "hard": 2, "unknown": 99}
+    return order.get(diff, 99)
 
+
+# --------------------------
+# Build DataFrames
+# --------------------------
+
+def build_runs_dataframe(run_dirs: List[str], difficulty_mode: str = "auto") -> pd.DataFrame:
+    """
+    Build a per-run DataFrame.
+    difficulty_mode:
+      - folder: use folder name only
+      - config: use config heuristic only
+      - auto: use config if it resolves to easy/baseline/hard else folder
+    """
+    rows: List[Dict[str, Any]] = []
     for run_dir in run_dirs:
         run_dir = os.path.abspath(run_dir)
         run_name = os.path.basename(run_dir.rstrip("/"))
-        difficulty = infer_difficulty_label(run_name)
+        mt_metrics, mt_raw = load_multitask_metrics(run_dir)
+        gen_cfg = load_generator_config(run_dir, mt_raw=mt_raw)
 
-        print(f"[*] Loading metrics from {run_dir} (difficulty={difficulty})")
+        diff_folder = infer_difficulty_from_folder(run_name)
+        diff_cfg = infer_difficulty_from_config(gen_cfg)
 
-        mt_metrics = load_multitask_metrics(run_dir)
-        gen_cfg = load_generator_config(run_dir)
+        if difficulty_mode == "folder":
+            difficulty = diff_folder
+        elif difficulty_mode == "config":
+            difficulty = diff_cfg
+        else:
+            # auto
+            difficulty = diff_cfg if diff_cfg != "unknown" else diff_folder
 
-        # layer × neg_mode combinations
+        if diff_cfg != "unknown" and diff_folder != "unknown" and diff_cfg != diff_folder:
+            print(f"[WARN] difficulty mismatch: folder={diff_folder}, config={diff_cfg} ({run_dir})")
+
+        # seed (prefer multitask_metrics.json)
+        seed = None
+        if isinstance(mt_raw, dict) and "seed" in mt_raw:
+            try:
+                seed = int(mt_raw["seed"])
+            except Exception:
+                seed = None
+        if seed is None:
+            seed = _parse_seed_from_name(run_name)
+
+        # linkpred combinations
         lp_fin_uniform = load_linkpred_metrics(run_dir, layer="finance", neg_mode="uniform")
         lp_fin_hard = load_linkpred_metrics(run_dir, layer="finance", neg_mode="hard_region")
         lp_comm_uniform = load_linkpred_metrics(run_dir, layer="communication", neg_mode="uniform")
@@ -170,8 +245,8 @@ def build_summary_dataframe(run_dirs: List[str]) -> pd.DataFrame:
         row = {
             "run_dir": run_dir,
             "run_name": run_name,
+            "seed": seed,
             "difficulty": difficulty,
-            # generator config
             **gen_cfg,
             # multitask
             "hvt_f1": mt_metrics.get("hvt_f1", np.nan),
@@ -195,21 +270,91 @@ def build_summary_dataframe(run_dirs: List[str]) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
-    # sort by difficulty order
     df["difficulty_order"] = df["difficulty"].apply(difficulty_sort_key)
     df = df.sort_values(["difficulty_order", "run_name"]).reset_index(drop=True)
     return df
 
 
+def build_aggregated_dataframe(df_runs: pd.DataFrame) -> pd.DataFrame:
+    """
+    Aggregate across seeds/runs per difficulty: mean±std.
+    Keeps generator config columns as the first (they should be identical by design).
+    """
+    if df_runs.empty:
+        return df_runs
+
+    cfg_cols = [
+        "finance_structure_strength",
+        "comm_structure_strength",
+        "comm_randomness",
+        "hvt_ratio",
+        "finance_w_group",
+        "finance_w_region",
+        "finance_w_ideo",
+        "finance_w_tier_dist",
+        "finance_base_bias",
+        "comm_avg_degree",
+        "comm_alpha0",
+        "comm_alpha_group",
+        "comm_alpha_region",
+        "comm_alpha_hier",
+        "comm_alpha_fin",
+        "ideo_threshold",
+        "op_num_cells",
+        "op_cell_size",
+    ]
+    metric_cols = [
+        "hvt_f1",
+        "hvt_auc",
+        "role_f1_macro",
+        "imp_r2",
+        "finance_auc_uniform",
+        "finance_ap_uniform",
+        "finance_auc_hard_region",
+        "finance_ap_hard_region",
+        "comm_auc_uniform",
+        "comm_ap_uniform",
+        "comm_auc_hard_region",
+        "comm_ap_hard_region",
+    ]
+
+    # protect against missing columns
+    cfg_cols = [c for c in cfg_cols if c in df_runs.columns]
+    metric_cols = [c for c in metric_cols if c in df_runs.columns]
+
+    grouped = df_runs.groupby("difficulty", dropna=False)
+    agg_mean = grouped[metric_cols].mean(numeric_only=True).add_suffix("_mean")
+    agg_std = grouped[metric_cols].std(numeric_only=True).add_suffix("_std")
+    agg_n = grouped.size().rename("n_runs")
+
+    # take first config snapshot per difficulty (they should match)
+    cfg_first = grouped[cfg_cols].first()
+
+    df_agg = pd.concat([cfg_first, agg_mean, agg_std, agg_n], axis=1).reset_index()
+    df_agg["difficulty_order"] = df_agg["difficulty"].apply(difficulty_sort_key)
+    df_agg = df_agg.sort_values(["difficulty_order"]).reset_index(drop=True)
+    return df_agg
+
+
 # --------------------------
-# Plot functions
+# Plotting
 # --------------------------
 
+def _get_series(df: pd.DataFrame, name: str) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    """
+    Return (y, yerr) for a metric name.
+    Supports either raw columns (name) or aggregated columns (name_mean / name_std).
+    """
+    if name in df.columns:
+        return df[name].to_numpy(), None
+    if f"{name}_mean" in df.columns:
+        y = df[f"{name}_mean"].to_numpy()
+        yerr = df.get(f"{name}_std", pd.Series([0.0] * len(df))).to_numpy()
+        return y, yerr
+    return np.array([np.nan] * len(df)), None
+
+
 def plot_bar_hvt_metrics(df: pd.DataFrame, out_dir: str):
-    """
-    Bar plots for HVT F1 / HVT AUC / Role F1 / Importance R2 by difficulty.
-    (Requirement #1 – simple bar plots)
-    """
     if df.empty:
         print("[!] Empty DataFrame, skip plot_bar_hvt_metrics")
         return
@@ -217,119 +362,96 @@ def plot_bar_hvt_metrics(df: pd.DataFrame, out_dir: str):
     labels = df["difficulty"].tolist()
     x = np.arange(len(labels))
 
-    # 1) HVT F1
-    plt.figure()
-    plt.bar(x, df["hvt_f1"].values)
-    plt.xticks(x, labels)
-    plt.ylabel("HVT F1 (threshold tuned)")
-    plt.title("HVT F1 by difficulty")
-    plt.tight_layout()
-    out_path = os.path.join(out_dir, "hvt_f1_by_difficulty.png")
-    plt.savefig(out_path)
-    plt.close()
-    print(f"[*] Saved plot: {out_path}")
-
-    # 2) HVT AUC
-    plt.figure()
-    plt.bar(x, df["hvt_auc"].values)
-    plt.xticks(x, labels)
-    plt.ylabel("HVT AUC (threshold tuned)")
-    plt.title("HVT AUC by difficulty")
-    plt.tight_layout()
-    out_path = os.path.join(out_dir, "hvt_auc_by_difficulty.png")
-    plt.savefig(out_path)
-    plt.close()
-    print(f"[*] Saved plot: {out_path}")
-
-    # 3) Role macro-F1
-    plt.figure()
-    plt.bar(x, df["role_f1_macro"].values)
-    plt.xticks(x, labels)
-    plt.ylabel("Role macro-F1 (test)")
-    plt.title("Role classification macro-F1 by difficulty")
-    plt.tight_layout()
-    out_path = os.path.join(out_dir, "role_f1_macro_by_difficulty.png")
-    plt.savefig(out_path)
-    plt.close()
-    print(f"[*] Saved plot: {out_path}")
-
-    # 4) Importance R^2
-    plt.figure()
-    plt.bar(x, df["imp_r2"].values)
-    plt.xticks(x, labels)
-    plt.ylabel("Importance $R^2$ (test)")
-    plt.title("Importance regression $R^2$ by difficulty")
-    plt.tight_layout()
-    out_path = os.path.join(out_dir, "importance_r2_by_difficulty.png")
-    plt.savefig(out_path)
-    plt.close()
-    print(f"[*] Saved plot: {out_path}")
+    for metric, ylabel, title, fname in [
+        ("hvt_f1", "HVT F1 (threshold tuned)", "HVT F1 by difficulty", "hvt_f1_by_difficulty.png"),
+        ("hvt_auc", "HVT AUC", "HVT AUC by difficulty", "hvt_auc_by_difficulty.png"),
+        ("role_f1_macro", "Role F1 (macro)", "Role F1 (macro) by difficulty", "role_f1_macro_by_difficulty.png"),
+        ("imp_r2", "Importance R2", "Importance R2 by difficulty", "imp_r2_by_difficulty.png"),
+    ]:
+        y, yerr = _get_series(df, metric)
+        plt.figure()
+        if yerr is None:
+            plt.bar(x, y)
+        else:
+            plt.bar(x, y, yerr=yerr, capsize=5)
+        plt.xticks(x, labels)
+        plt.ylabel(ylabel)
+        plt.title(title)
+        plt.tight_layout()
+        out_path = os.path.join(out_dir, fname)
+        plt.savefig(out_path)
+        plt.close()
+        print(f"[*] Saved plot: {out_path}")
 
 
 def plot_bar_linkpred_layer(df: pd.DataFrame, out_dir: str, layer: str):
-    """
-    Grouped bar plot of uniform vs hard_region AUC for each layer
-    (Finance / Communication).
-    """
     if df.empty:
         print("[!] Empty DataFrame, skip plot_bar_linkpred_layer")
         return
 
     labels = df["difficulty"].tolist()
     x = np.arange(len(labels))
-    width = 0.35
 
-    if layer == "finance":
-        auc_uniform = df["finance_auc_uniform"].values
-        auc_hard = df["finance_auc_hard_region"].values
-        title = "Finance link prediction AUC by difficulty"
-        fname = "finance_link_auc_by_difficulty.png"
-    elif layer == "communication":
-        auc_uniform = df["comm_auc_uniform"].values
-        auc_hard = df["comm_auc_hard_region"].values
-        title = "Communication link prediction AUC by difficulty"
-        fname = "communication_link_auc_by_difficulty.png"
-    else:
-        raise ValueError(f"Unknown layer: {layer}")
-
-    plt.figure()
-    plt.bar(x - width / 2, auc_uniform, width, label="uniform")
-    plt.bar(x + width / 2, auc_hard, width, label="hard_region")
-    plt.xticks(x, labels)
-    plt.ylabel("Test AUC")
-    plt.title(title)
-    plt.legend()
-    plt.tight_layout()
-    out_path = os.path.join(out_dir, fname)
-    plt.savefig(out_path)
-    plt.close()
-    print(f"[*] Saved plot: {out_path}")
+    for neg_mode in ["uniform", "hard_region"]:
+        for metric_key, metric_label in [("auc", "AUC"), ("ap", "AP")]:
+            col = f"{'finance' if layer=='finance' else 'comm'}_{metric_key}_{neg_mode}"
+            y, yerr = _get_series(df, col)
+            plt.figure()
+            if yerr is None:
+                plt.bar(x, y)
+            else:
+                plt.bar(x, y, yerr=yerr, capsize=5)
+            plt.xticks(x, labels)
+            plt.ylabel(f"{layer} {metric_label} ({neg_mode})")
+            plt.title(f"{layer} link prediction {metric_label} by difficulty ({neg_mode})")
+            plt.tight_layout()
+            out_path = os.path.join(out_dir, f"{layer}_{metric_key}_{neg_mode}_by_difficulty.png")
+            plt.savefig(out_path)
+            plt.close()
+            print(f"[*] Saved plot: {out_path}")
 
 
 def plot_difficulty_vs_performance_curve(df: pd.DataFrame, out_dir: str):
     """
-    Requirement #2: show the following across difficulty (easy/baseline/hard)
-    on a single line plot:
-    - HVT F1
-    - Finance link AUC (hard_region)
-    - Communication link AUC (hard_region)
+    Difficulty index: easy=1, baseline=2, hard=3. Plot mean curves (with optional error bars).
     """
     if df.empty:
         print("[!] Empty DataFrame, skip plot_difficulty_vs_performance_curve")
         return
 
-    labels = df["difficulty"].tolist()
-    x = np.arange(len(labels))
+    difficulty_to_x = {"easy": 1, "baseline": 2, "hard": 3}
+    df = df[df["difficulty"].isin(difficulty_to_x.keys())].copy()
+    if df.empty:
+        print("[!] No recognized difficulty labels (easy/baseline/hard). Skip curve plot.")
+        return
+
+    df["diff_idx"] = df["difficulty"].map(difficulty_to_x)
+    df = df.sort_values("diff_idx")
+
+    curves = [
+        ("hvt_f1", "HVT F1"),
+        ("hvt_auc", "HVT AUC"),
+        ("role_f1_macro", "Role F1 (macro)"),
+        ("imp_r2", "Importance R2"),
+        ("finance_auc_uniform", "Finance AUC (uniform)"),
+        ("comm_auc_uniform", "Comm AUC (uniform)"),
+    ]
 
     plt.figure()
-    plt.plot(x, df["hvt_f1"].values, marker="o", label="HVT F1 (tuned)")
-    plt.plot(x, df["finance_auc_hard_region"].values, marker="o", label="Finance AUC (hard_region)")
-    plt.plot(x, df["comm_auc_hard_region"].values, marker="o", label="Comm AUC (hard_region)")
-    plt.xticks(x, labels)
+    for metric, label in curves:
+        y, yerr = _get_series(df, metric)
+        x = df["diff_idx"].to_numpy()
+        if yerr is None:
+            plt.plot(x, y, marker="o", label=label)
+        else:
+            plt.errorbar(x, y, yerr=yerr, marker="o", capsize=4, label=label)
+
+    plt.xticks([1, 2, 3], ["easy", "baseline", "hard"])
     plt.xlabel("Difficulty")
-    plt.ylabel("Metric value")
-    plt.title("Difficulty vs Performance (HVT + Link prediction)")
+    plt.ylabel("Performance")
+    plt.title("Difficulty vs Performance (mean across seeds; ±1 std if available)")
     plt.legend()
+    plt.grid(True, alpha=0.3)
     plt.tight_layout()
     out_path = os.path.join(out_dir, "difficulty_vs_performance_curve.png")
     plt.savefig(out_path)
@@ -337,22 +459,43 @@ def plot_difficulty_vs_performance_curve(df: pd.DataFrame, out_dir: str):
     print(f"[*] Saved plot: {out_path}")
 
 
+# --------------------------
+# Main
+# --------------------------
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Summarize multitask + link prediction metrics across difficulties."
+        description="Summarize multitask + link prediction metrics across difficulties (supports multi-seed averaging)."
     )
     parser.add_argument(
         "--run_dirs",
         type=str,
         nargs="+",
         required=True,
-        help="Paths to experiment result folders (e.g., data/multiplex_easy data/multiplex_baseline data/multiplex_hard)",
+        help="Paths to experiment result folders (can include multiple seeds per difficulty).",
     )
     parser.add_argument(
         "--out_dir",
         type=str,
         default=None,
-        help="Directory to save plots and CSV (default: first run_dir)",
+        help="Directory to save plots and CSV (default: first run_dir).",
+    )
+    parser.add_argument(
+        "--difficulty_mode",
+        type=str,
+        default="auto",
+        choices=["auto", "folder", "config"],
+        help="How to determine difficulty label: folder-name / config-heuristic / auto (default).",
+    )
+    parser.add_argument(
+        "--aggregate",
+        action="store_true",
+        help="If set, plot and save aggregated (mean±std) results by difficulty.",
+    )
+    parser.add_argument(
+        "--save_runs_csv",
+        action="store_true",
+        help="If set, also save the per-run CSV (useful for debugging).",
     )
 
     args = parser.parse_args()
@@ -363,24 +506,31 @@ def main():
         out_dir = os.path.abspath(args.out_dir)
     os.makedirs(out_dir, exist_ok=True)
 
-    # 1) aggregate metrics from multiple run_dirs into a DataFrame
-    df = build_summary_dataframe(args.run_dirs)
-    if df.empty:
-        print("[!] No data loaded. Check run_dirs.")
+    df_runs = build_runs_dataframe(args.run_dirs, difficulty_mode=args.difficulty_mode)
+    if df_runs.empty:
+        print("[!] No runs were loaded. Check --run_dirs paths.")
         return
 
-    # save as CSV (tabular results)
-    csv_path = os.path.join(out_dir, "multitask_linkpred_summary.csv")
-    df.to_csv(csv_path, index=False)
-    print(f"[*] Saved summary CSV: {csv_path}")
+    if args.save_runs_csv:
+        runs_csv = os.path.join(out_dir, "multitask_linkpred_summary_runs.csv")
+        df_runs.to_csv(runs_csv, index=False)
+        print(f"[*] Saved per-run CSV: {runs_csv}")
 
-    # Requirement 1: bar plots (HVT/Role/Importance + layer-wise link AUC)
-    plot_bar_hvt_metrics(df, out_dir)
-    plot_bar_linkpred_layer(df, out_dir, layer="finance")
-    plot_bar_linkpred_layer(df, out_dir, layer="communication")
+    if args.aggregate:
+        df_plot = build_aggregated_dataframe(df_runs)
+        agg_csv = os.path.join(out_dir, "multitask_linkpred_summary_agg.csv")
+        df_plot.to_csv(agg_csv, index=False)
+        print(f"[*] Saved aggregated CSV: {agg_csv}")
+    else:
+        df_plot = df_runs
+        csv_path = os.path.join(out_dir, "multitask_linkpred_summary.csv")
+        df_plot.to_csv(csv_path, index=False)
+        print(f"[*] Saved summary CSV: {csv_path}")
 
-    # Requirement 2: difficulty (easy/baseline/hard) vs performance curves
-    plot_difficulty_vs_performance_curve(df, out_dir)
+    plot_bar_hvt_metrics(df_plot, out_dir)
+    plot_bar_linkpred_layer(df_plot, out_dir, layer="finance")
+    plot_bar_linkpred_layer(df_plot, out_dir, layer="communication")
+    plot_difficulty_vs_performance_curve(df_plot, out_dir)
 
 
 if __name__ == "__main__":
