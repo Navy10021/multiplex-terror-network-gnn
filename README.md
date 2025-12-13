@@ -174,8 +174,12 @@ This will create `data/multiplex_baseline/multiplex.json`.
 ```bash
 python src/data/build_pyg_dataset.py \
   --manifest data/multiplex_baseline/multiplex.json \
+  --split_seed 2025 \
   --out_path data/multiplex_baseline/pyg_data.pt
 ```
+
+`--split_seed` controls the **train/val/test node split** independently from the generator seed (recommended for reproducible multi-seed sweeps).
+
 
 ### 3) Run diagnostics (optional but recommended)
 ```bash
@@ -250,21 +254,29 @@ This works because the scripts write `*_metrics.json` and plot folders to `os.pa
 
 ## 📊 Example Results (Summary)
 
-Metrics are aggregated from `results/summary_all/multitask_linkpred_summary.csv` (rounded to 3 decimals).
+The summarizer reads generator knobs from each run’s `multiplex.json` and metrics from:
+- `multitask_metrics.json`
+- `linkpred_<layer>_<neg_mode>.json`
+
+It writes:
+- `multitask_linkpred_summary_raw.csv` (one row per run)
+- `multitask_linkpred_summary_agg.csv` (mean/std aggregated by difficulty)
+
+Below is a single-run snapshot (n=1 per difficulty) from `multitask_linkpred_summary_raw.csv` (rounded to 3 decimals).
 
 ### Multi-task (HVT / Role / Importance)
-| Difficulty | HVT ratio | HVT F1 | HVT AUC | Role F1 (macro) | Importance R² |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| easy | 0.08 | 0.500 | 0.952 | 0.321 | 0.458 |
-| baseline | 0.08 | 0.545 | 0.934 | 0.359 | 0.532 |
-| hard | 0.10 | 0.455 | 0.902 | 0.353 | 0.425 |
+| Difficulty | Finance strength | Comm randomness | HVT ratio | HVT F1 | HVT AUC | Role F1 (macro) | Importance R² |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| easy | 1.000 | 0.000 | 0.050 | 0.667 | 0.929 | 0.266 | 0.347 |
+| baseline | 1.000 | 0.000 | 0.050 | 0.125 | 0.885 | 0.557 | 0.501 |
+| hard | 0.700 | 0.500 | 0.050 | 0.741 | 0.962 | 0.503 | 0.577 |
 
 ### Link Prediction (best AUC only)
 | Difficulty | Finance AUC* | Comm AUC* |
 | --- | ---: | ---: |
-| easy | 0.988 | 0.897 |
-| baseline | 0.988 | 0.899 |
-| hard | 0.978 | 0.920 |
+| easy | 0.988 | 0.898 |
+| baseline | 0.988 | 0.897 |
+| hard | 0.980 | 0.915 |
 
 Notes:
 - *LinkPred AUC is the **best** of `uniform` vs `hard_region` negative sampling (full AUC/AP breakdown is in the CSV).
@@ -272,23 +284,22 @@ Notes:
 
 ---
 
-
 ## 📈 Reproducing Summary Plots
 
-After collecting multiple run folders (e.g., `results/run_easy_...`, `results/run_hard_...`), you can aggregate and plot:
+After collecting multiple run folders (you may pass multiple seeds per difficulty), aggregate and plot:
 
 ```bash
 python src/analysis/plot_multitask_linkpred_summary.py \
-  --run_dirs results/run_easy results/run_baseline results/run_hard \
+  --run_dirs data/multiplex_easy data/multiplex_baseline data/multiplex_hard \
   --out_dir results/summary_all
 ```
 
-The script expects each run directory to contain:
-- `multitask_metrics.json`
-- `linkpred_<layer>_<neg_mode>.json`
-- optionally, `multiplex.json` (for reading generator config)
+Outputs:
+- `results/summary_all/multitask_linkpred_summary_raw.csv`
+- `results/summary_all/multitask_linkpred_summary_agg.csv` (plus error-bar plots if you have multi-seed runs)
 
----
+If you only want the raw CSV (no aggregation), add `--no_aggregate`.
+
 
 ## ⚙️ Configuration (Generator Knobs)
 
@@ -296,6 +307,9 @@ All presets live under `configs/`. The most important parameters:
 
 - `size`: number of nodes
 - `hvt_ratio`: fraction of HVT nodes
+
+**Recommendation:** keep `hvt_ratio` fixed across `easy/baseline/hard` when you want difficulty to reflect *structural/noise* knobs rather than label imbalance.
+
 - `finance_structure_strength`: stronger → more structured/clustered finance edges
 - `comm_structure_strength`: stronger → more structured communication edges
 - `comm_randomness`: stronger → noisier / less structured communication edges
