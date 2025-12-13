@@ -254,13 +254,13 @@ Aggregated from `results/summary_all/multitask_linkpred_summary.csv` (rounded to
 
 | Difficulty | HVT F1 | HVT AUC | Role F1 (macro) | Importance R² | Finance LinkPred AUC* | Comm LinkPred AUC* |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| easy | 0.250 | 0.893 | 0.575 | 0.551 | 0.988 | 0.898 |
-| baseline | 0.500 | 0.918 | 0.280 | 0.331 | 0.988 | 0.897 |
-| hard | 0.286 | 0.886 | 0.188 | 0.172 | 0.978 | 0.920 |
+| easy | 0.750 | 0.945 | 0.333 | 0.384 | 0.988 | 0.885 |
+| baseline | 0.462 | 0.881 | 0.532 | 0.514 | 0.988 | 0.899 |
+| hard | 0.308 | 0.847 | 0.358 | 0.320 | 0.978 | 0.922 |
 
 Notes:
-- *LinkPred AUC is reported as the **best** value among the two negative-sampling modes (`uniform` vs `hard_region`) for readability.
-- Full AUC/AP breakdown by mode is available in the CSV.
+- *LinkPred AUC uses the **best** value among the two negative-sampling modes (`uniform` vs `hard_region`) for readability.
+- HVT metrics are reported with validation-based threshold tuning (see `multitask_metrics.json`).
 
 ---
 
