@@ -246,19 +246,21 @@ If you prefer a `results/<difficulty>/<run_name>/...` layout, the simplest optio
 
 This works because the scripts write `*_metrics.json` and plot folders to `os.path.dirname(data_path)`.
 
+---
+
 ## 📊 Example Results (Summary)
 
-Reference runs from `results/summary_all/multitask_linkpred_summary.csv`:
+Aggregated from `results/summary_all/multitask_linkpred_summary.csv` (rounded to 3 decimals).
 
-| Difficulty | HVT F1 | HVT AUC | Role F1 (macro) | Importance R² | Finance AUC/AP (u; hr) | Comm AUC/AP (u; hr) |
-| --- | ---: | ---: | ---: | ---: | --- | --- |
-| easy | 0.250 | 0.893 | 0.575 | 0.551 | u 0.981/0.960; hr 0.988/0.979 | u 0.864/0.827; hr 0.898/0.882 |
-| baseline | 0.500 | 0.918 | 0.280 | 0.331 | u 0.980/0.960; hr 0.988/0.979 | u 0.864/0.827; hr 0.897/0.879 |
-| hard | 0.286 | 0.886 | 0.188 | 0.172 | u 0.970/0.937; hr 0.978/0.966 | u 0.796/0.734; hr 0.920/0.929 |
+| Difficulty | HVT F1 | HVT AUC | Role F1 (macro) | Importance R² | Finance LinkPred AUC* | Comm LinkPred AUC* |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| easy | 0.250 | 0.893 | 0.575 | 0.551 | 0.988 | 0.898 |
+| baseline | 0.500 | 0.918 | 0.280 | 0.331 | 0.988 | 0.897 |
+| hard | 0.286 | 0.886 | 0.188 | 0.172 | 0.978 | 0.920 |
 
 Notes:
-- `AUC/AP (u; hr)` reports link prediction under **uniform negatives (u)** vs **region-constrained hard negatives (hr)**.
-- HVT metrics are reported with the project’s validation-based threshold selection (see `multitask_metrics.json`).
+- *LinkPred AUC is reported as the **best** value among the two negative-sampling modes (`uniform` vs `hard_region`) for readability.
+- Full AUC/AP breakdown by mode is available in the CSV.
 
 ---
 
