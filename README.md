@@ -248,42 +248,17 @@ This works because the scripts write `*_metrics.json` and plot folders to `os.pa
 
 ## 📊 Example Results (Summary)
 
-Reference runs from `results/summary_all/multitask_linkpred_summary.csv`.
+Reference runs from `results/summary_all/multitask_linkpred_summary.csv`:
 
-### 1) Generator knobs (difficulty presets)
-| Difficulty | finance_structure_strength | comm_structure_strength | comm_randomness | hvt_ratio |
-| --- | ---: | ---: | ---: | ---: |
-| easy | 1.20 | 1.20 | 0.00 | 0.05 |
-| baseline | 1.00 | 1.00 | 0.00 | 0.05 |
-| hard | 0.70 | 0.70 | 0.50 | 0.05 |
-
-### 2) Multi-task performance (test split)
-| Difficulty | HVT F1 (tuned) | HVT AUC | Role F1 (macro) | Importance R² |
-| --- | ---: | ---: | ---: | ---: |
-| easy | 0.750 | 0.945 | 0.333 | 0.384 |
-| baseline | 0.462 | 0.881 | 0.532 | 0.514 |
-| hard | 0.308 | 0.847 | 0.358 | 0.320 |
-
-### 3) Layer-wise link prediction (test@best-val-AUC)
-**Finance layer**
-| Difficulty | AUC (uniform) | AP (uniform) | AUC (hard_region) | AP (hard_region) |
-| --- | ---: | ---: | ---: | ---: |
-| easy | 0.982 | 0.968 | 0.988 | 0.984 |
-| baseline | 0.981 | 0.960 | 0.988 | 0.980 |
-| hard | 0.970 | 0.937 | 0.978 | 0.966 |
-
-**Communication layer**
-| Difficulty | AUC (uniform) | AP (uniform) | AUC (hard_region) | AP (hard_region) |
-| --- | ---: | ---: | ---: | ---: |
-| easy | 0.855 | 0.806 | 0.885 | 0.862 |
-| baseline | 0.864 | 0.826 | 0.899 | 0.884 |
-| hard | 0.796 | 0.734 | 0.922 | 0.931 |
+| Difficulty | HVT F1 | HVT AUC | Role F1 (macro) | Importance R² | Finance AUC/AP (u; hr) | Comm AUC/AP (u; hr) |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| easy | 0.250 | 0.893 | 0.575 | 0.551 | u 0.981/0.960; hr 0.988/0.979 | u 0.864/0.827; hr 0.898/0.882 |
+| baseline | 0.500 | 0.918 | 0.280 | 0.331 | u 0.980/0.960; hr 0.988/0.979 | u 0.864/0.827; hr 0.897/0.879 |
+| hard | 0.286 | 0.886 | 0.188 | 0.172 | u 0.970/0.937; hr 0.978/0.966 | u 0.796/0.734; hr 0.920/0.929 |
 
 Notes:
-- Multi-task summary uses **HVT threshold tuning on the validation set** (`multitask_metrics.json` → `hvt_threshold_tuned.test`). :contentReference[oaicite:1]{index=1}  
-- Role F1 / Importance R² are read from the **fixed threshold** block (`multitask_metrics.json` → `fixed_threshold.test`). :contentReference[oaicite:2]{index=2}  
-- Link prediction reports **test metrics at the checkpoint selected by best validation AUC** (`linkpred_<layer>_<neg_mode>.json` → `test_at_best_val_auc`, includes AUC/AP). :contentReference[oaicite:3]{index=3}  
-- `hard_region` negatives are constrained by region (distribution-shifted hard negatives), so **uniform vs hard_region는 “절대 난이도” 비교라기보다 neg sampling 설정별 비교**로 해석하는 것을 권장합니다. :contentReference[oaicite:4]{index=4}
+- `AUC/AP (u; hr)` reports link prediction under **uniform negatives (u)** vs **region-constrained hard negatives (hr)**.
+- HVT metrics are reported with the project’s validation-based threshold selection (see `multitask_metrics.json`).
 
 ---
 
