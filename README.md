@@ -250,17 +250,25 @@ This works because the scripts write `*_metrics.json` and plot folders to `os.pa
 
 ## 📊 Example Results (Summary)
 
-Aggregated from `results/summary_all/multitask_linkpred_summary.csv` (rounded to 3 decimals).
+Metrics are aggregated from `results/summary_all/multitask_linkpred_summary.csv` (rounded to 3 decimals).
 
-| Difficulty | HVT F1 | HVT AUC | Role F1 (macro) | Importance R² | Finance LinkPred AUC* | Comm LinkPred AUC* |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| easy | 0.750 | 0.945 | 0.333 | 0.384 | 0.988 | 0.885 |
-| baseline | 0.462 | 0.881 | 0.532 | 0.514 | 0.988 | 0.899 |
-| hard | 0.308 | 0.847 | 0.358 | 0.320 | 0.978 | 0.922 |
+### Multi-task (HVT / Role / Importance)
+| Difficulty | HVT ratio | HVT F1 | HVT AUC | Role F1 (macro) | Importance R² |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| easy | 0.08 | 0.500 | 0.952 | 0.321 | 0.458 |
+| baseline | 0.08 | 0.545 | 0.934 | 0.359 | 0.532 |
+| hard | 0.10 | 0.455 | 0.902 | 0.353 | 0.425 |
+
+### Link Prediction (best AUC only)
+| Difficulty | Finance AUC* | Comm AUC* |
+| --- | ---: | ---: |
+| easy | 0.988 | 0.897 |
+| baseline | 0.988 | 0.899 |
+| hard | 0.978 | 0.920 |
 
 Notes:
-- *LinkPred AUC uses the **best** value among the two negative-sampling modes (`uniform` vs `hard_region`) for readability.
-- HVT metrics are reported with validation-based threshold tuning (see `multitask_metrics.json`).
+- *LinkPred AUC is the **best** of `uniform` vs `hard_region` negative sampling (full AUC/AP breakdown is in the CSV).
+
 
 ---
 
