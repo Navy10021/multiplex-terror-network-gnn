@@ -116,10 +116,70 @@ multiplex-terror-network-gnn/
 ```
 
 ---
-
 ## ⚙️ Installation
 
 ### 1) Clone the repository
+```bash
+git clone https://github.com/Navy10021/multiplex-terror-network-gnn.git
+cd multiplex-terror-network-gnn
+```
+
+### 2) Create environment (conda, recommended)
+```bash
+conda create -n terror-gnn python=3.10 -y
+conda activate terror-gnn
+```
+
+### 3) Install PyTorch + PyG
+Install PyTorch / PyG based on your OS + CUDA setup. Example (CUDA 12.x):
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+```
+
+Then install PyG following the official instructions for your exact PyTorch/CUDA combination.
+
+### 4) Install remaining dependencies
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## 🚀 Quick Start
+
+End-to-end in **four** steps (works for `easy`, `baseline`, or `hard`).
+
+### 1) Generate a multiplex graph
+```bash
+python src/data/multiplex_generator_v2.py \
+  --size 1500 \
+  --seed 2025 \
+  --out_dir data/multiplex_baseline \
+  --config configs/generator_baseline.json
+```
+
+This will create `data/multiplex_baseline/multiplex.json`.
+
+### 2) Convert to a PyG dataset
+```bash
+python src/data/build_pyg_dataset.py \
+  --manifest data/multiplex_baseline/multiplex.json \
+  --split_seed 2025 \
+  --out_path data/multiplex_baseline/pyg_data.pt
+```
+
+`--split_seed` controls the **train/val/test node split** independently from the generator seed (recommended for reproducible multi-seed sweeps).
+
+
+### 3) Run diagnostics (optional but recommended)
+```bash
+python src/data/basic_diagnostics.py \
+  --manifest data/multiplex_baseline/multiplex.json \
+  --out_dir data/analysis/multiplex_baseline
+```
+
+### 4) Train models
+Multi-task HVT + role + importance:
 ```bash
 # Example: train on the baseline dataset (HVT ratio = 0.05)
 python src/models/train_multitask_gnn_v2.py \
@@ -130,23 +190,20 @@ python src/models/train_multitask_gnn_v2.py \
   --hvt_calib temperature --hvt_calib_cv_folds 5 \
   --thr_strategy prevalence --thr_prevalence 0.05 --thr_bootstrap 200 \
   --save_best
-
-# To run other difficulty settings, change only --data_path:
-#   data/multiplex_easy/pyg_data.pt
-#   data/multiplex_hard/pyg_data.pt
 ```
 
-
-### 4) (Optional) Train layer-wise link prediction
-
+Layer-wise link prediction (finance or communication):
 ```bash
 python src/models/train_linkpred_layer.py \
   --data_path data/multiplex_baseline/pyg_data.pt \
-  --layer finance --neg_mode hard_region \
-  --seed 2025
+  --layer finance \
+  --hidden_dim 64 --num_layers 3 --lr 1e-3 \
+  --neg_mode hard_region \
+  --epochs 500
 ```
 
-See `src/models/train_linkpred_layer.py --help` for available layers and negative-sampling modes.
+Repeat with `configs/generator_easy.json` or `configs/generator_hard.json` to sweep difficulty.
+
 
 ## 🧪 Jupyter Notebook (Optional)
 
