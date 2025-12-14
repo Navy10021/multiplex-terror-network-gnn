@@ -108,7 +108,8 @@ multiplex-terror-network-gnn/
 │   │   ├── build_pyg_dataset.py
 │   │   └── basic_diagnostics.py
 │   ├── models/
-│   │   ├── train_multitask_gnn.py
+│   │   ├── train_multitask_gnn_v1.py
+|   |   ├── train_multitask_gnn_v2.py
 │   │   ├── train_hvt_gnn.py
 │   │   └── train_linkpred_layer.py
 │   └── analysis/
