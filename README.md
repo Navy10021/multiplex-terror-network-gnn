@@ -17,7 +17,7 @@
 
 > **Purpose & Safety Notice (Defensive CT Research Only)**
 >
-> This repository supports **defensive, lawful counter-terrorism (CT) research and education** by providing a
+> This project supports **defensive, lawful counter-terrorism (CT) research and education** by providing a
 > **synthetic multiplex terrorist-network generator** and **benchmark tasks** (e.g., HVT detection, role prediction,
 > disruption scoring, and layer-wise link prediction).
 >
