@@ -43,7 +43,7 @@ import math
 import os
 import random
 from dataclasses import dataclass
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 
 import numpy as np
 import torch
@@ -53,7 +53,7 @@ import torch.nn.functional as F
 from torch_geometric.data import Data
 from torch_geometric.nn import RGCNConv, TransformerConv
 
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, average_precision_score, mean_squared_error, r2_score
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, average_precision_score, mean_squared_error, r2_score, roc_curve, brier_score_loss
 
 import matplotlib.pyplot as plt
 
@@ -330,6 +330,7 @@ def evaluate_split(
     hvt_threshold: float,
     imp_mean: float,
     imp_std: float,
+    hvt_temperature: float | None = None,
 ) -> Dict[str, float]:
     model.eval()
     x = data.x.to(device)
@@ -358,7 +359,10 @@ def evaluate_split(
 
     # HVT
     y_hvt_true = y_hvt[mask].cpu().numpy()
-    y_hvt_prob = torch.sigmoid(hvt_logits[mask]).cpu().numpy()
+    if hvt_temperature is not None:
+        y_hvt_prob = apply_temperature_to_logits(hvt_logits[mask], float(hvt_temperature)).cpu().numpy()
+    else:
+        y_hvt_prob = torch.sigmoid(hvt_logits[mask]).cpu().numpy()
     y_hvt_pred = (y_hvt_prob > float(hvt_threshold)).astype(np.int32)
     hvt_acc = accuracy_score(y_hvt_true, y_hvt_pred)
     hvt_f1 = f1_score(y_hvt_true, y_hvt_pred, zero_division=0)
@@ -407,6 +411,237 @@ def sweep_threshold_for_best_f1(y_true: np.ndarray, y_prob: np.ndarray, steps: i
             best = {"acc": float(acc), "f1": float(f1), "auc": float(auc)}
     return best_thr, best
 
+
+
+def compute_ece(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    n_bins: int = 15,
+    adaptive: bool = False,
+    min_bin_size: int = 20,
+) -> float:
+    """Expected Calibration Error (ECE) for binary probabilities.
+
+    Notes:
+      - `adaptive=False`: equal-width bins in [0,1] (classic ECE).
+      - `adaptive=True`: approximately equal-mass bins via quantiles, with a small guard
+        (`min_bin_size`) to reduce high-variance bins when val set is small / imbalanced.
+    """
+    y_true = np.asarray(y_true, dtype=np.float64)
+    y_prob = np.asarray(y_prob, dtype=np.float64)
+    y_prob = np.clip(y_prob, 1e-8, 1.0 - 1e-8)
+
+    n = len(y_true)
+    if n == 0:
+        return 0.0
+
+    if adaptive:
+        # Choose bin edges by quantiles of probabilities (equal-mass bins).
+        # Guard: if dataset is small, reduce #bins to keep a minimum bin size.
+        max_bins = max(1, min(n_bins, int(max(1, n // max(1, min_bin_size)))))
+        if max_bins <= 1:
+            bins = np.array([0.0, 1.0], dtype=np.float64)
+        else:
+            qs = np.linspace(0.0, 1.0, max_bins + 1)
+            bins = np.quantile(y_prob, qs)
+            # Ensure strict monotonicity & include endpoints.
+            bins[0] = 0.0
+            bins[-1] = 1.0
+            bins = np.unique(bins)
+            if len(bins) < 2:
+                bins = np.array([0.0, 1.0], dtype=np.float64)
+    else:
+        bins = np.linspace(0.0, 1.0, n_bins + 1, dtype=np.float64)
+
+    # Assign bins
+    bin_ids = np.digitize(y_prob, bins, right=False) - 1
+    n_bins_eff = len(bins) - 1
+
+    ece = 0.0
+    for b in range(n_bins_eff):
+        mask = bin_ids == b
+        if not np.any(mask):
+            continue
+        conf = float(np.mean(y_prob[mask]))
+        acc = float(np.mean(y_true[mask]))
+        ece += (np.sum(mask) / n) * abs(acc - conf)
+    return float(ece)
+
+def fit_temperature_scaling(
+    val_logits: torch.Tensor,
+    val_labels: torch.Tensor,
+    device: torch.device,
+    max_iter: int = 200,
+    init_temperature: float = 1.0,
+    reg_lambda: float = 0.0,
+) -> float:
+    """Fit a single temperature `T` on a validation set by minimizing NLL.
+
+    Regularization:
+      - If `reg_lambda>0`, adds `reg_lambda * (log(T))^2` to discourage extreme temperatures
+        and reduce overfitting / instability (useful for small / imbalanced val sets).
+    """
+    val_logits = val_logits.detach().to(device)
+    val_labels = val_labels.detach().float().to(device)
+
+    log_t = torch.tensor([math.log(max(init_temperature, 1e-6))], device=device, requires_grad=True)
+    optimizer = torch.optim.LBFGS([log_t], lr=0.1, max_iter=max_iter, line_search_fn="strong_wolfe")
+
+    bce = torch.nn.BCEWithLogitsLoss(reduction="mean")
+
+    def closure():
+        optimizer.zero_grad()
+        t = torch.exp(log_t).clamp(min=1e-6, max=100.0)
+        loss = bce(val_logits / t, val_labels)
+        if reg_lambda and reg_lambda > 0.0:
+            loss = loss + float(reg_lambda) * (log_t ** 2).mean()
+        loss.backward()
+        return loss
+
+    optimizer.step(closure)
+    t_final = float(torch.exp(log_t).clamp(min=1e-6, max=100.0).item())
+    return t_final
+
+def apply_temperature_to_logits(logits: torch.Tensor, temperature: float) -> torch.Tensor:
+    t = float(max(temperature, 1e-6))
+    return torch.sigmoid(logits / t)
+
+
+
+
+def crossfit_temperature_scaling(
+    val_logits: torch.Tensor,
+    val_labels: torch.Tensor,
+    device: torch.device,
+    n_folds: int = 5,
+    seed: int = 0,
+    max_iter: int = 200,
+    init_temperature: float = 1.0,
+    reg_lambda: float = 0.0,
+) -> Tuple[float, torch.Tensor, Dict[str, Any]]:
+    """Cross-fit temperature scaling to reduce calibration overfit on a single val split.
+
+    Returns:
+      T_final: median temperature across folds
+      oof_probs: out-of-fold calibrated probabilities for val set
+      info: dict with fold temperatures and summary stats
+    """
+    from sklearn.model_selection import StratifiedKFold
+
+    val_logits = val_logits.detach().to(device)
+    val_labels = val_labels.detach().long().to(device)
+
+    n = int(val_labels.numel())
+    if n_folds <= 1 or n < 10:
+        # fallback: single fit, no OOF
+        T = fit_temperature_scaling(
+            val_logits=val_logits,
+            val_labels=val_labels,
+            device=device,
+            max_iter=max_iter,
+            init_temperature=init_temperature,
+            reg_lambda=reg_lambda,
+        )
+        probs = torch.sigmoid(val_logits / T).detach()
+        info = {"fold_temperatures": [T], "T_median": T, "T_iqr": (T, T)}
+        return T, probs, info
+
+    y_np = val_labels.detach().cpu().numpy()
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+
+    oof_probs = torch.empty((n,), device=device, dtype=torch.float32)
+    fold_ts: List[float] = []
+
+    for train_idx, hold_idx in skf.split(np.zeros(n), y_np):
+        train_idx_t = torch.tensor(train_idx, device=device, dtype=torch.long)
+        hold_idx_t = torch.tensor(hold_idx, device=device, dtype=torch.long)
+
+        T_k = fit_temperature_scaling(
+            val_logits=val_logits[train_idx_t],
+            val_labels=val_labels[train_idx_t],
+            device=device,
+            max_iter=max_iter,
+            init_temperature=init_temperature,
+            reg_lambda=reg_lambda,
+        )
+        fold_ts.append(float(T_k))
+        oof_probs[hold_idx_t] = torch.sigmoid(val_logits[hold_idx_t] / float(T_k))
+
+    # Robust aggregate
+    T_sorted = sorted(fold_ts)
+    T_median = float(np.median(T_sorted))
+    q25 = float(np.quantile(T_sorted, 0.25))
+    q75 = float(np.quantile(T_sorted, 0.75))
+
+    info = {"fold_temperatures": fold_ts, "T_median": T_median, "T_iqr": (q25, q75)}
+    return T_median, oof_probs.detach(), info
+
+def select_threshold_by_prevalence(y_prob: np.ndarray, prevalence: float) -> float:
+    """Choose threshold so that roughly prevalence fraction are predicted positive (top-k)."""
+    y_prob = np.asarray(y_prob).astype(np.float64)
+    prevalence = float(np.clip(prevalence, 1e-6, 1 - 1e-6))
+    n = len(y_prob)
+    k = int(round(prevalence * n))
+    k = max(1, min(n, k))
+    # threshold is the k-th largest value
+    thr = float(np.partition(y_prob, n - k)[n - k])
+    return thr
+
+
+def select_threshold_fixed_fpr(y_true: np.ndarray, y_prob: np.ndarray, target_fpr: float = 0.01) -> float:
+    y_true = np.asarray(y_true).astype(int)
+    y_prob = np.asarray(y_prob).astype(np.float64)
+    target_fpr = float(np.clip(target_fpr, 0.0, 1.0))
+    fpr, tpr, thr = roc_curve(y_true, y_prob)
+    # roc_curve returns thresholds in descending order (first is inf)
+    idx = int(np.argmin(np.abs(fpr - target_fpr)))
+    chosen = thr[idx]
+    if not np.isfinite(chosen):
+        # fall back to max finite threshold
+        finite = thr[np.isfinite(thr)]
+        chosen = float(np.max(finite)) if finite.size else 0.5
+    return float(chosen)
+
+
+def bootstrap_threshold(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    strategy: str,
+    steps: int,
+    prevalence: float | None,
+    target_fpr: float,
+    n_boot: int,
+    seed: int = 0,
+) -> tuple[float, float, float]:
+    """Bootstrap threshold selection to stabilize the operating point.
+
+    Returns: (median, p25, p75)
+    """
+    rng = np.random.default_rng(seed)
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob)
+    n = len(y_true)
+    idx = np.arange(n)
+
+    thrs = []
+    for _ in range(int(n_boot)):
+        sample = rng.choice(idx, size=n, replace=True)
+        yt = y_true[sample]
+        yp = y_prob[sample]
+
+        if strategy == "f1":
+            thr, _ = sweep_threshold_for_best_f1(yt, yp, steps=steps)
+        elif strategy in ("prevalence", "topk"):
+            thr = select_threshold_by_prevalence(yp, prevalence if prevalence is not None else float(np.mean(yt)))
+        elif strategy == "fixed_fpr":
+            thr = select_threshold_fixed_fpr(yt, yp, target_fpr=target_fpr)
+        else:
+            thr, _ = sweep_threshold_for_best_f1(yt, yp, steps=steps)
+
+        thrs.append(float(thr))
+
+    thrs = np.asarray(thrs, dtype=np.float64)
+    return float(np.median(thrs)), float(np.percentile(thrs, 25)), float(np.percentile(thrs, 75))
 
 # -----------------------------
 # Plotting
@@ -549,6 +784,33 @@ def main():
         default=200,
         help="Number of thresholds to sweep on the validation set to maximize HVT F1 (default: 200).",
     )
+
+
+    # HVT calibration / thresholding (recommended for stable operating points)
+    parser.add_argument("--hvt_calibrate", action="store_true",
+                        help="Fit post-hoc probability calibration for the HVT head on the validation split (default: off).")
+    parser.add_argument("--hvt_calib_method", type=str, default="temperature", choices=["temperature"],
+                        help="Calibration method for HVT probabilities (default: temperature).")
+    parser.add_argument("--hvt_ece_bins", type=int, default=15,
+                        help="Number of bins for calibration error (ECE) computation (default: 15).")
+
+    parser.add_argument("--hvt_ece_adaptive", action="store_true",
+                        help="Use adaptive (equal-mass) binning for ECE to reduce high-variance estimates on small/imbalanced val sets.")
+    parser.add_argument("--hvt_calib_cv_folds", type=int, default=5,
+                        help="Number of folds for cross-fit temperature scaling on validation set (default: 5). Use 1 to disable cross-fitting.")
+    parser.add_argument("--hvt_calib_reg_lambda", type=float, default=0.0,
+                        help="Regularization strength for temperature scaling: adds reg_lambda*(logT)^2 to NLL (default: 0.0).")
+
+
+    parser.add_argument("--thr_strategy", type=str, default="f1",
+                        choices=["f1", "prevalence", "topk", "fixed_fpr"],
+                        help="How to select the HVT decision threshold from validation predictions.")
+    parser.add_argument("--thr_prevalence", type=float, default=None,
+                        help="Target positive rate used by thr_strategy=prevalence/topk. If None, uses generator_config['hvt_ratio'] if available, else empirical validation prevalence.")
+    parser.add_argument("--thr_fpr", type=float, default=0.01,
+                        help="Target false-positive-rate used by thr_strategy=fixed_fpr (default: 0.01).")
+    parser.add_argument("--thr_bootstrap", type=int, default=0,
+                        help="Bootstrap resamples on validation set to stabilize the chosen threshold (0=off). Median threshold is used.")
 
     args = parser.parse_args()
 
@@ -884,21 +1146,134 @@ def main():
         ei, et, ea = edge_index, edge_type, edge_attr
         out = model(x, ei, et, edge_attr=ea)
         logits_hvt = out["hvt_logits"].view(-1)
-        hvt_prob = torch.sigmoid(logits_hvt).detach().cpu().numpy()
+        hvt_prob_uncal = torch.sigmoid(logits_hvt).detach().cpu().numpy()
 
     y_val_true = y_hvt[val_mask].detach().cpu().numpy().astype(int)
-    y_val_prob = hvt_prob[val_mask.cpu().numpy()]
+    # Validation arrays (uncalibrated vs calibrated)
+    val_logits = logits_hvt[val_mask].detach()
+    y_val_prob_uncal = hvt_prob_uncal[val_mask.cpu().numpy()]
+
+    temperature = 1.0
+    y_val_prob_oof = None
+
+    if args.hvt_calibrate:
+        # Cross-fit temperature scaling on validation to reduce overfitting of calibration.
+        if args.hvt_calib_cv_folds and args.hvt_calib_cv_folds > 1:
+            temperature, oof_probs_t, calib_info = crossfit_temperature_scaling(
+                val_logits=val_logits,
+                val_labels=torch.as_tensor(y_val_true, device=val_logits.device),
+                device=val_logits.device,
+                n_folds=args.hvt_calib_cv_folds,
+                seed=args.seed,
+                max_iter=200,
+                init_temperature=1.0,
+                reg_lambda=args.hvt_calib_reg_lambda,
+            )
+            y_val_prob = apply_temperature_to_logits(val_logits, temperature).detach().cpu().numpy()
+            y_val_prob_oof = oof_probs_t.detach().cpu().numpy()
+        else:
+            temperature = fit_temperature_scaling(
+                val_logits=val_logits,
+                val_labels=torch.as_tensor(y_val_true, device=val_logits.device),
+                device=val_logits.device,
+                max_iter=200,
+                init_temperature=1.0,
+                reg_lambda=args.hvt_calib_reg_lambda,
+            )
+            y_val_prob = apply_temperature_to_logits(val_logits, temperature).detach().cpu().numpy()
+    else:
+        y_val_prob = y_val_prob_uncal
+
+    # Calibration diagnostics (validation)
+    try:
+        ece_before = compute_ece(y_val_true, y_val_prob_uncal, n_bins=args.hvt_ece_bins, adaptive=args.hvt_ece_adaptive)
+        brier_before = float(brier_score_loss(y_val_true, y_val_prob_uncal))
+
+        _prob_for_calib_metrics = y_val_prob_oof if (y_val_prob_oof is not None) else y_val_prob
+        ece_after = compute_ece(y_val_true, _prob_for_calib_metrics, n_bins=args.hvt_ece_bins, adaptive=args.hvt_ece_adaptive)
+        brier_after = float(brier_score_loss(y_val_true, _prob_for_calib_metrics))
+    except Exception:
+        ece_before = float('nan')
+        brier_before = float('nan')
+        ece_after = float('nan')
+        brier_after = float('nan')
     thr_steps = int(getattr(args, "thr_steps", 200))
-    best_thr, best_val_hvt = sweep_threshold_for_best_f1(y_val_true, y_val_prob, steps=thr_steps)
+
+    # Threshold selection: prefer stable, policy-driven operating points for imbalanced HVT
+    prevalence = args.thr_prevalence
+    if prevalence is None:
+        generator_cfg = getattr(data, "generator_config", {})
+        if isinstance(generator_cfg, dict) and ("hvt_ratio" in generator_cfg):
+            prevalence = float(generator_cfg["hvt_ratio"])
+        else:
+            prevalence = float(np.mean(y_val_true))
+
+    if args.thr_strategy == "f1":
+        best_thr, best_val_hvt = sweep_threshold_for_best_f1(y_val_true, y_val_prob, steps=thr_steps)
+    elif args.thr_strategy in ("prevalence", "topk"):
+        best_thr = select_threshold_by_prevalence(y_val_prob, prevalence)
+        yhat = (y_val_prob >= best_thr).astype(int)
+        best_val_hvt = {
+            "acc": float(accuracy_score(y_val_true, yhat)),
+            "f1": float(f1_score(y_val_true, yhat, zero_division=0)),
+            "auc": float(roc_auc_score(y_val_true, y_val_prob)),
+            "ap": float(average_precision_score(y_val_true, y_val_prob)),
+        }
+    elif args.thr_strategy == "fixed_fpr":
+        best_thr = select_threshold_fixed_fpr(y_val_true, y_val_prob, target_fpr=args.thr_fpr)
+        yhat = (y_val_prob >= best_thr).astype(int)
+        best_val_hvt = {
+            "acc": float(accuracy_score(y_val_true, yhat)),
+            "f1": float(f1_score(y_val_true, yhat, zero_division=0)),
+            "auc": float(roc_auc_score(y_val_true, y_val_prob)),
+            "ap": float(average_precision_score(y_val_true, y_val_prob)),
+        }
+    else:
+        best_thr, best_val_hvt = sweep_threshold_for_best_f1(y_val_true, y_val_prob, steps=thr_steps)
+
+    # Optional bootstrap to stabilize the chosen operating threshold
+    thr_p25 = None
+    thr_p75 = None
+    if getattr(args, "thr_bootstrap", 0) and int(args.thr_bootstrap) > 0:
+        thr_med, thr_p25, thr_p75 = bootstrap_threshold(
+            y_val_true,
+            y_val_prob,
+            strategy=args.thr_strategy,
+            steps=thr_steps,
+            prevalence=prevalence,
+            target_fpr=args.thr_fpr,
+            n_boot=int(args.thr_bootstrap),
+            seed=int(getattr(args, "seed", 0)),
+        )
+        best_thr = thr_med
+        yhat = (y_val_prob >= best_thr).astype(int)
+        best_val_hvt = {
+            "acc": float(accuracy_score(y_val_true, yhat)),
+            "f1": float(f1_score(y_val_true, yhat, zero_division=0)),
+            "auc": float(roc_auc_score(y_val_true, y_val_prob)),
+            "ap": float(average_precision_score(y_val_true, y_val_prob)),
+        }
+        print(f"[*] Threshold bootstrap: median={best_thr:.3f}, IQR=[{float(thr_p25):.3f}, {float(thr_p75):.3f}] (n={int(args.thr_bootstrap)})")
+
+    calib_msg = ""
+    if args.hvt_calibrate:
+        calib_msg = (
+            f", calib=temperature(T={temperature:.3f}), "
+            f"ECE {ece_before:.3f}->{ece_after:.3f}, "
+            f"Brier {brier_before:.3f}->{brier_after:.3f}"
+        )
 
     print(
-        f"[*] Best threshold (val HVT F1): {best_thr:.3f} | "
-        f"val_acc={best_val_hvt['acc']:.3f}, val_f1={best_val_hvt['f1']:.3f}, val_auc={best_val_hvt['auc']:.3f}"
+        f"[*] Selected HVT threshold: {best_thr:.3f} "
+        f"(strategy={args.thr_strategy}, prevalence={prevalence:.3f}{calib_msg}) | "
+        f"val_acc={best_val_hvt['acc']:.3f}, val_f1={best_val_hvt['f1']:.3f}, "
+        f"val_auc={best_val_hvt['auc']:.3f}, val_ap={best_val_hvt.get('ap', float('nan')):.3f}"
     )
 
     # Evaluate HVT metrics with best validation-F1 threshold
-    train_hvt = evaluate_split(model, data, device, train_mask, best_thr, imp_mean, imp_std)
-    test_hvt  = evaluate_split(model, data, device, test_mask,  best_thr, imp_mean, imp_std)
+    hvt_temp = temperature if args.hvt_calibrate else None
+    train_hvt = evaluate_split(model, data, device, train_mask, best_thr, imp_mean, imp_std, hvt_temp)
+    test_hvt  = evaluate_split(model, data, device, test_mask,  best_thr, imp_mean, imp_std, hvt_temp)
 
     # Convert train/test HVT metrics to the same key schema as val (acc/f1/auc)
     train_at_best = {
@@ -968,6 +1343,22 @@ def main():
         mt_result["generator_meta"] = getattr(data, "generator_meta")
     if hasattr(data, "generator_config"):
         mt_result["generator_config"] = getattr(data, "generator_config")
+
+    # calibration & operating-point info (HVT)
+    mt_result["hvt_calibration"] = {
+        "enabled": bool(getattr(args, "hvt_calibrate", False)),
+        "method": str(getattr(args, "hvt_calib_method", "temperature")),
+        "temperature": float(temperature) if "temperature" in locals() else 1.0,
+        "ece_val_before": float(ece_before) if "ece_before" in locals() else None,
+        "ece_val_after": float(ece_after) if "ece_after" in locals() else None,
+        "brier_val_before": float(brier_before) if "brier_before" in locals() else None,
+        "brier_val_after": float(brier_after) if "brier_after" in locals() else None,
+        "thr_strategy": str(getattr(args, "thr_strategy", "f1")),
+        "thr_prevalence": float(prevalence) if "prevalence" in locals() else None,
+        "thr_fpr": float(getattr(args, "thr_fpr", 0.01)),
+        "thr_bootstrap": int(getattr(args, "thr_bootstrap", 0)),
+        "thr_iqr": {"p25": float(thr_p25), "p75": float(thr_p75)} if ("thr_p25" in locals() and thr_p25 is not None) else None,
+    }
 
     with open(metrics_path, "w") as f:
         json.dump(mt_result, f, indent=2)
