@@ -192,7 +192,7 @@ python src/data/basic_diagnostics.py \
 ### 4) Train models
 Multi-task HVT + role + importance:
 ```bash
-python src/models/train_multitask_gnn.py \
+python src/models/train_multitask_gnn_v2.py \
   --data_path data/multiplex_baseline/pyg_data.pt \
   --hidden_dim 64 --num_layers 3 --lr 1e-3 --epochs 500
 ```
