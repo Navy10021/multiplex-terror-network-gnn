@@ -17,13 +17,10 @@
 
 > **Purpose & Safety Notice (Defensive CT Research Only)**
 >
-> This project supports **defensive, lawful counter-terrorism (CT) research and education** by providing a
-> **synthetic multiplex terrorist-network generator** and **benchmark tasks** (e.g., HVT detection, role prediction,
-> disruption scoring, and layer-wise link prediction).
->
-> - All graphs produced by this codebase are **synthetic (simulation-based)** and **do not represent real individuals**
->   or real-world operational intelligence.
-> - Do **not** use this repository to facilitate harm, illegal surveillance, or operational targeting.
+> This repository is intended for **defensive, lawful counter-terrorism (CT)** and **criminal-network analysis** research—e.g., **disruption strategy evaluation**, **risk scoring**, and **resilience planning** on multiplex networks.
+> All data are **100% synthetic**. This code is **not** intended for **operational targeting**, **real-world surveillance**, or analysis of real social networks.
+> See **[Ethical Considerations](#-ethical-considerations)** for allowed and prohibited uses.
+
 
 ## 🔍 TL;DR
 
@@ -94,28 +91,41 @@ Recommended layout:
 
 ```text
 multiplex-terror-network-gnn/
+├── README.md
+├── requirements.txt
+├── .gitignore
+│
 ├── configs/
-│   ├── generator_baseline.json
 │   ├── generator_easy.json
+│   ├── generator_baseline.json
 │   └── generator_hard.json
-├── data/
-│   └── (generated outputs; not committed)
+│
 ├── src/
-│   ├── multiplex_generator_v2.py
-│   ├── build_pyg_dataset.py
-│   ├── basic_diagnostics.py
+│   ├── __init__.py
+│   ├── data/
+│   │   ├── multiplex_generator_v1.py
+│   │   ├── multiplex_generator_v2.py
+│   │   ├── build_pyg_dataset.py
+│   │   └── basic_diagnostics.py
 │   ├── models/
-│   │   ├── train_multitask_gnn_v2.py        # multi-task (recommended)
-│   │   ├── train_multitask_gnn_v1.py        # legacy
-│   │   ├── train_hvt_gnn.py                 # single-task HVT baseline
-│   │   └── train_linkpred_layer.py          # layer-wise link prediction
+│   │   ├── train_multitask_gnn.py
+│   │   ├── train_hvt_gnn.py
+│   │   └── train_linkpred_layer.py
 │   └── analysis/
 │       └── plot_multitask_linkpred_summary.py
-├── README.md
-└── requirements.txt
+│
+├── data/
+│   ├── multiplex_easy/
+│   ├── multiplex_baseline/
+│   ├── multiplex_hard/
+│   └── analysis/
+│
+└── results/
+    └── summary_all/
 ```
 
 ---
+
 ## ⚙️ Installation
 
 ### 1) Clone the repository
@@ -164,12 +174,8 @@ This will create `data/multiplex_baseline/multiplex.json`.
 ```bash
 python src/data/build_pyg_dataset.py \
   --manifest data/multiplex_baseline/multiplex.json \
-  --split_seed 2025 \
   --out_path data/multiplex_baseline/pyg_data.pt
 ```
-
-`--split_seed` controls the **train/val/test node split** independently from the generator seed (recommended for reproducible multi-seed sweeps).
-
 
 ### 3) Run diagnostics (optional but recommended)
 ```bash
@@ -181,15 +187,9 @@ python src/data/basic_diagnostics.py \
 ### 4) Train models
 Multi-task HVT + role + importance:
 ```bash
-# Example: train on the baseline dataset (HVT ratio = 0.05)
-python src/models/train_multitask_gnn_v2.py \
+python src/models/train_multitask_gnn.py \
   --data_path data/multiplex_baseline/pyg_data.pt \
-  --seed 1024 \
-  --edge_balance --edge_balance_mult 12.0 --edge_balance_cap 50000 \
-  --early_stop_metric hvt_auc --patience 50 \
-  --hvt_calib temperature --hvt_calib_cv_folds 5 \
-  --thr_strategy prevalence --thr_prevalence 0.05 --thr_bootstrap 200 \
-  --save_best
+  --hidden_dim 64 --num_layers 3 --lr 1e-3 --epochs 500
 ```
 
 Layer-wise link prediction (finance or communication):
@@ -210,12 +210,32 @@ Repeat with `configs/generator_easy.json` or `configs/generator_hard.json` to sw
 This repo supports an optional notebook workflow for rapid prototyping, visualization, and debugging.
 A Jupyter notebook is provided (e.g., ./notebooks/multiplex-terror-network-gnn.ipynb) that:
 - Generates configurable synthetic multiplex network data
-- GNN-based model training and evaluation
-- Visualizes and interprets results
+- GNN-based model## 📊 Example Results
 
-Open it in VSCode or JupyterLab and adapt cells to your scenario.
+Below are representative results from the latest **Multi-task GNN (v2)** runs on the synthetic multiplex benchmarks (**N=1500**, seed=1024, HVT ratio=0.05). These metrics are aggregated in `multitask_linkpred_summary.csv`.
 
----
+### Multi-task node prediction (Role + HVT + Importance)
+
+| Difficulty | HVT AUC | HVT F1* | Role Macro-F1 | Importance R² |
+| --- | --- | --- | --- | --- |
+| easy | 0.948 | 0.421 | 0.560 | 0.573 |
+| baseline | 0.941 | 0.556 | 0.616 | 0.615 |
+| hard | 0.952 | 0.636 | 0.631 | 0.679 |
+
+\* **HVT F1** is computed on the test set using the HVT decision threshold selected on the validation set (prevalence-aligned thresholding with temperature scaling, as implemented in the training script).
+
+### Link prediction (Finance / Communication)
+
+| Difficulty | Finance LP AUC/AP | Comm LP AUC/AP |
+| --- | --- | --- |
+| easy | 0.992 / 0.991 (uniform) | 0.860 / 0.808 (hard-region) |
+| baseline | 0.995 / 0.995 (hard-region) | 0.871 / 0.832 (hard-region) |
+| hard | 0.982 / 0.967 (hard-region) | 0.885 / 0.882 (hard-region) |
+
+For link prediction, we evaluate two negative-sampling protocols and report the **better AUC/AP** for each difficulty setting:
+- **uniform**: negatives sampled uniformly at random
+- **hard-region**: negatives sampled from the same region (harder discrimination)
+
 
 ## 🗂️ Outputs
 
@@ -236,7 +256,7 @@ data/multiplex_baseline/
 └── multitask_plots/
     ├── loss_curves.png
     ├── hvt_auc_curve.png
-    └── (additional artifacts)
+    └── ...
 ```
 
 If you prefer a `results/<difficulty>/<run_name>/...` layout, the simplest option is:
@@ -248,73 +268,11 @@ This works because the scripts write `*_metrics.json` and plot folders to `os.pa
 
 ---
 
-## 📊 Example Results
+## 📈 Results Summary
 
-The numbers below are **sample outputs** from this repository’s default presets. Exact values can vary with seed, graph size, and generator knobs.
+The latest benchmark results (multi-task node prediction + link prediction) are shown in **Example Results** above and are aggregated in `multitask_linkpred_summary.csv`.
 
-### Multi-task GNN (v2)
-
-| Difficulty | HVT AUC | HVT F1 (thr=0.5) | HVT F1 (val-tuned) | Role F1 (macro) | Imp R² |
-|---|---:|---:|---:|---:|---:|
-| baseline | 0.936 | 0.333 | 0.526 | 0.602 | 0.659 |
-| easy | 0.949 | 0.192 | 0.421 | 0.564 | 0.572 |
-| hard | 0.951 | 0.280 | 0.800 | 0.595 | 0.676 |
-
-Notes:
-- HVT is typically **highly imbalanced**; prefer **AUC** for model selection and use the **val-tuned threshold** for a stable F1 target.
-- `multitask_metrics.json` stores both the fixed-threshold metrics and the validation threshold sweep result.
-
-### Layer-wise link prediction
-
-| Task | Negative sampling | Best AUC |
-|---|---|---:|
-| Finance link prediction | hard_region | 0.988 |
-| Communication link prediction | hard_region | 0.915 |
-
-Full link-prediction summaries are saved as `multitask_linkpred_summary.csv`.
-
-
-## 🎚️ HVT Thresholding & Calibration
-
-HVT detection is **intentionally imbalanced** (e.g., `hvt_ratio=0.05`). For this reason, a single fixed threshold can be unstable across difficulty presets.
-
-This repo therefore reports (and saves) three views of HVT performance:
-- **Threshold-free**: ROC-AUC (and AP during training) for model selection.
-- **Fixed threshold**: metrics at `thr=0.5` for a simple baseline.
-- **Val-tuned threshold**: a sweep on validation that maximizes **F1**, then applied to test.
-
-If you want *operationally stable* behavior, consider selecting thresholds by:
-- **Target alert rate** (e.g., “top-k nodes per graph” or “≤X% flagged”), or
-- **Cost ratio** (false-positive vs false-negative trade-off),
-
-and always monitor calibration drift when generator knobs (or real-world data) shift.
-
-
-## 📈 Reproducing Summary Plots
-
-After collecting multiple run folders (you may pass multiple seeds per difficulty), aggregate and plot:
-
-```bash
-python src/analysis/plot_multitask_linkpred_summary.py \
-  --run_dirs data/multiplex_easy data/multiplex_baseline data/multiplex_hard \
-  --out_dir results/summary_all
-```
-
-Outputs:
-- `results/summary_all/multitask_linkpred_summary_raw.csv`
-- `results/summary_all/multitask_linkpred_summary_agg.csv` (plus error-bar plots if you have multi-seed runs)
-
-If you only want the raw CSV (no aggregation), add `--no_aggregate`.
-
-
-## ⚙️ Configuration (Generator Knobs)
-
-All presets live under `configs/`. The most important parameters:
-
-- `size`: number of nodes
-- `hvt_ratio`: fraction of HVT nodes
-
-**Recommendation:** keep `hvt_ratio` fixed across `easy/baseline/hard` when you want difficulty to reflect *structural/noise* knobs rather than label imbalance.
+### Difficulty knobs
 
 - `finance_structure_strength`: stronger → more structured/clustered finance edges
 - `comm_structure_strength`: stronger → more structured communication edges
@@ -348,7 +306,7 @@ This uses a small graph (120 nodes) and exercises:
 - **Custom difficulty:** copy a config under `configs/` and tweak `finance_structure_strength`, `comm_structure_strength`, `comm_randomness`, and `hvt_ratio`. Pass it via `--config` to `multiplex_generator_v2.py`.
 - **New node/edge features:** extend `generate_multiplex_with_config` in `src/data/multiplex_generator_v2.py` and ensure they are preserved in `build_pyg_dataset.py`.
 - **Model variants:**
-  - Add heads or encoders in `src/models/train_multitask_gnn_v2.py` for alternative loss balancing or architectures.
+  - Add heads or encoders in `src/models/train_multitask_gnn.py` for alternative loss balancing or architectures.
   - Swap decoders or negative sampling in `src/models/train_linkpred_layer.py` to test other link-prediction strategies.
 - **Reporting:** regenerate summary plots with `src/analysis/plot_multitask_linkpred_summary.py` after adding new runs.
 
