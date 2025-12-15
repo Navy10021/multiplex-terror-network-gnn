@@ -214,27 +214,28 @@ A Jupyter notebook is provided (e.g., ./notebooks/multiplex-terror-network-gnn.i
 
 Below are representative results from the latest **Multi-task GNN (v2)** runs on the synthetic multiplex benchmarks (**N=1500**, seed=1024, HVT ratio=0.05). These metrics are aggregated in `multitask_linkpred_summary.csv`.
 
-### Multi-task node prediction (Role + HVT + Importance)
+## 📊 Example Results (Synthetic Multiplex, n=1500)
+Note: the uploaded multitask_linkpred_summary.csv currently indicates hvt_ratio=0.05. If your latest run is truly hvt_ratio=0.07, please re-export the summary and replace the numbers below.
 
-| Difficulty | HVT AUC | HVT F1* | Role Macro-F1 | Importance R² |
+### Multi-task node prediction (Node-level)
+| Difficulty | Role macro-F1 | HVT AUC | HVT F1 | Importance R² | 
 | --- | --- | --- | --- | --- |
-| easy | 0.948 | 0.421 | 0.560 | 0.573 |
-| baseline | 0.941 | 0.556 | 0.616 | 0.615 |
-| hard | 0.952 | 0.636 | 0.631 | 0.679 |
+| easy | 0.566 | 0.929 | 0.667 | 0.347 |
+| baseline | 0.557 | 0.930 | 0.669 | 0.501 |
+| hard | 0.533 | 0.962 | 0.741 | 0.577 |
 
-\* **HVT F1** is computed on the test set using the HVT decision threshold selected on the validation set (prevalence-aligned thresholding with temperature scaling, as implemented in the training script).
-
-### Link prediction (Finance / Communication)
-
+### Link Prediction (Edge-level)
 | Difficulty | Finance LP AUC/AP | Comm LP AUC/AP |
 | --- | --- | --- |
-| easy | 0.992 / 0.991 (uniform) | 0.860 / 0.808 (hard-region) |
-| baseline | 0.995 / 0.995 (hard-region) | 0.871 / 0.832 (hard-region) |
-| hard | 0.982 / 0.967 (hard-region) | 0.885 / 0.882 (hard-region) |
+| easy | 0.988 / 0.979 (uniform) | 0.898 / 0.882 (hard-region) |
+| baseline | 0.988 / 0.979 (hard-region) | 0.897 / 0.880 (hard-region) |
+| hard | 0.980 / 0.973 (hard-region) | 0.915 / 0.920 (hard-region) |
 
-For link prediction, we evaluate two negative-sampling protocols and report the **better AUC/AP** for each difficulty setting:
-- **uniform**: negatives sampled uniformly at random
-- **hard-region**: negatives sampled from the same region (harder discrimination)
+For link prediction, we evaluate two negative-sampling protocols and report the better AUC/AP for each difficulty setting:
+- uniform: negatives sampled uniformly at random
+- hard-region: negatives sampled from the same region (harder discrimination)
+
+Quick read: In this summary, **hard** is best on HVT and importance (AUC/R²), and **Comm link prediction** improves with difficulty. **Finance link prediction** is consistently strong across settings (AUC ≈ 0.98–0.99).
 
 
 ## 🗂️ Outputs
