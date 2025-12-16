@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import random
 
+from src.utils.exp_logging import build_artifact_dir, collect_run_metadata, write_run_metadata
+from src.validation.schema import validate_manifest_dict
+
 
 # -----------------------------
 # Data class definitions
@@ -1476,22 +1479,50 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Structured Multiplex Terrorist Network Generator v3")
     parser.add_argument("--size", type=int, default=1500, help="number of nodes")
-    parser.add_argument("--out_dir", type=str, required=True, help="output directory")
+    parser.add_argument("--out_dir", type=str, default=None, help="output directory (legacy/manual)")
+    parser.add_argument(
+        "--out_root",
+        type=str,
+        default=None,
+        help="If provided, create an auto-named run folder under this root (UTC+hash+seed)",
+    )
+    parser.add_argument("--run_prefix", type=str, default="run", help="Prefix for auto-named run directories")
     parser.add_argument("--seed", type=int, default=2025, help="random seed")
     parser.add_argument("--config", type=str, default=None, help="JSON config file for generator (optional)")
 
     args = parser.parse_args()
 
-    os.makedirs(args.out_dir, exist_ok=True)
+    if args.out_root:
+        out_dir = build_artifact_dir(args.out_root, args.config, args.seed, prefix=args.run_prefix)
+    elif args.out_dir:
+        out_dir = args.out_dir
+    else:
+        parser.error("Either --out_root or --out_dir must be provided.")
+
+    os.makedirs(out_dir, exist_ok=True)
 
     cfg = load_generator_config(args.config, size=args.size, seed=args.seed)
     manifest = generate_multiplex_with_config(cfg)
+    manifest_model = validate_manifest_dict(manifest)
 
-    out_path = os.path.join(args.out_dir, "multiplex.json")
+    out_path = os.path.join(out_dir, "multiplex.json")
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
 
     print(f"[*] Saved multiplex manifest to: {out_path}")
+
+    metadata = collect_run_metadata(
+        out_dir=out_dir,
+        config_path=args.config,
+        seed=args.seed,
+        extra={
+            "manifest_path": os.path.abspath(out_path),
+            "validated": True,
+            "generator": manifest_model.meta.generator,
+        },
+    )
+    meta_path = write_run_metadata(out_dir, metadata)
+    print(f"[*] Saved run metadata to: {meta_path}")
 
 
 if __name__ == "__main__":

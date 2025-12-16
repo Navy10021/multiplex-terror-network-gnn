@@ -43,6 +43,8 @@ import pandas as pd
 import torch
 from torch_geometric.data import Data
 
+from src.validation.schema import validate_manifest_file
+
 
 # -----------------------------
 # Utility
@@ -553,6 +555,9 @@ def main():
 
     args = parser.parse_args()
     os.makedirs(os.path.dirname(args.out_path), exist_ok=True)
+
+    validate_manifest_file(args.manifest)
+    print("[*] Manifest schema validated.")
 
     print("[*] Building PyG Data from:", args.manifest)
     data = build_pyg_data(
