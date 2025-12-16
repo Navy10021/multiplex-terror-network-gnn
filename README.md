@@ -178,12 +178,33 @@ Then install PyG following the official instructions for your exact PyTorch/CUDA
 
 ### 4) Install remaining dependencies
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.lock  # fully pinned
+# or
+pip install -r requirements.txt   # if you need to adjust torch/pyg for your CUDA
 ```
 
 ---
 
 ## 🚀 Quick Start
+
+**One command (auto-managed run folder + metadata)**
+
+```bash
+python -m src.run_all \
+  --config configs/generator_baseline.json \
+  --size 1500 \
+  --seed 2025 \
+  --out_root results/
+```
+
+This creates a UTC-timestamped run directory (pattern: `run_<date>_<config-hash>_seed<seed>`) containing:
+- `multiplex.json` (validated manifest)
+- `pyg_data.pt` (PyG dataset)
+- `diagnostics/` (plots + CSVs)
+- `run_metadata.json` (config hash, git commit, CLI command)
+- `DATASET_CARD.md` (layer-wise edge noise/copied rates + artifact paths)
+
+---
 
 End-to-end in **four** steps (works for `easy`, `baseline`, or `hard`).
 

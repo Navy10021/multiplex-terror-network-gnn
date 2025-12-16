@@ -190,5 +190,54 @@ python src/models/train_linkpred_layer_v3.py --data_path data/multiplex_baseline
 
 ## 8. Notes on Responsible Use
 
-This project uses synthetic data and is intended for defensive research and benchmarking.  
+This project uses synthetic data and is intended for defensive research and benchmarking.
 Avoid interpreting it as operational intelligence or guidance.
+
+---
+
+## 9. 추가 개선 제안 (실행 우선순위 포함)
+
+### A) 재현성/결과 추적 강화를 위한 운영 자동화 (우선순위 ★★★)
+- **단일 엔트리포인트 스크립트**: `python -m src.run_all` 형식의 드라이버를 추가해 `generator → build → diagnostics → train`을 일괄 실행하도록 하고, 실행에 사용된 **config 경로/해시, seed, Git commit**을 JSON 로그에 남기기.
+- **환경 고정**: `requirements.txt`의 버전 범위를 상한/하한으로 고정하고, `pip-tools`나 `uv lock` 등을 사용해 `requirements.lock`을 커밋해 동일 환경 재현성을 높이기.
+- **아티팩트 네이밍 표준화**: 출력 폴더를 `<date>_<config-hash>_<seed>` 규칙으로 생성하여 비교 실험 간 충돌을 방지하고, 요약 리포트에서 이 메타데이터를 자동 수집하도록 수정.
+
+**단계별 실행(우선 적용 순)**
+1) **잠금 파일 도입 및 실행 메타데이터 로그**
+   - `requirements.in → requirements.lock` 파이프라인을 추가하고, CI에서 `pip install -r requirements.lock` 사용.
+   - `src/utils/exp_logging.py`(신규)로 **config 해시, seed, Git commit, 실행 명령어**를 표준 JSON(`run_metadata.json`)에 기록.
+2) **아티팩트 디렉터리 표준화**
+   - 드라이버 스크립트에서 `<UTC date>_<config-hash>_<seed>` 규칙으로 모든 산출물 저장 루트 생성.
+   - `basic_diagnostics_v3.py`와 학습 스크립트가 공통 메타데이터를 읽어 요약 리포트에 병기하도록 경로 인수 추가.
+3) **엔드투엔드 드라이버 제공**
+   - `python -m src.run_all --config ... --seed ... --out_root results/` 형태로 생성→빌드→진단→훈련을 호출.
+   - 주요 단계 성공/실패 상태와 산출물 경로를 단일 `run_summary.json`으로 모아 후속 실험 비교에 활용.
+
+### B) 데이터 품질 및 안전장치 확장 (우선순위 ★★☆)
+- **스키마 검증**: `pydantic` 기반의 `multiplex.json` 스키마 검증기를 추가해 필수 필드 누락, 타입 불일치, 레이어별 edge flag 존재 여부 등을 파이프라인 초입에서 차단.
+- **노이즈/편향 점검 규칙**: diagnostics 단계에 "허용 오차"를 명시(예: false-edge 비율 ±2%p)하고, 벗어날 경우 경고를 발생시켜 잘못된 설정을 조기에 발견.
+- **데이터 카드**: 각 생성된 데이터셋 폴더에 자동으로 `DATASET_CARD.md`를 생성해 생성 명령어, config 요약, 주요 통계(노드/엣지 수, 레이어별 missing/false/copy 비율)를 기록.
+
+**단계별 실행(우선 적용 순)**
+1) **스키마 검증기 + CI 게이트**
+   - `src/validation/schema.py`에 Pydantic 모델 정의 후 `basic_diagnostics_v3.py` 및 `build_pyg_dataset_v3.py` 진입 전에 실행.
+   - CI에서 샘플 `multiplex.json`으로 검증기를 호출하는 테스트 추가하여 구조 변경 시 조기 감지.
+2) **노이즈/편향 허용 범위 알림**
+   - `basic_diagnostics_v3.py` 출력에 **허용 오차 대비 초과 여부**(warning)와 세부 항목(예: false-edge rate, copy rate, layer overlap)을 JSON+stdout 모두에 기록.
+   - 파라미터는 `configs/generator_*.json`에서 `tolerance` 섹션으로 읽어 유연하게 조정.
+3) **DATASET_CARD 자동 생성**
+   - 드라이버 실행 종료 시 `DATASET_CARD.md`를 생성하여 **생성 명령어, config 해시, seed, 주요 통계(노드/엣지/레이어별 노이즈 비율)**를 표로 기록.
+   - 재생산성을 위해 `run_metadata.json`과 동일 경로에 저장하고, 결과 수집 스크립트가 카드 내용을 요약 테이블에 병합하도록 확장.
+
+### C) 테스트 커버리지 및 CI 구축 (우선순위 ★★☆)
+- **단위 테스트**: `tests/`에 다음 검증을 추가
+  - `build_pyg_dataset_v3`의 mask/label 크기 일관성 및 `edge_is_false/edge_is_copied` 전달 여부 확인
+  - 링크 예측 학습 시 **target layer held-out positive 제거** 로직이 동작하는지 확인
+  - 고정 seed에서 `multiplex_generator_v3` 출력이 결정적임을 보증
+- **샘플 데이터 기반 회귀 테스트**: 작은 `toy` 설정(예: size=40)을 추가해 CI에서 빠르게 생성→빌드→간단한 forward pass까지 실행하도록 구성.
+- **GitHub Actions 워크플로우**: `python -m pip install -r requirements.txt` 후 위 테스트와 `ruff/black` 체크를 수행하는 기본 CI를 추가.
+
+### D) 문서화 & 온보딩 개선 (우선순위 ★☆☆)
+- **실험 요약 템플릿**: `results/summary_all`에 실험별 핵심 지표(역할 F1, HVT AUC, importance R², layer별 LP AUC)를 표 형태로 자동 갱신하는 스크립트와 README 섹션을 추가.
+- **사용 사례 예제 노트북**: `notebooks/`에 "difficulty sweep" 예제 노트북을 추가해 config 파라미터가 결과 지표에 미치는 영향을 시각화.
+- **안전 가이드 고도화**: `README`의 윤리/안전 섹션에 허용/금지 사용 사례 체크리스트와 모델/데이터 재배포 시 요구사항을 명시.

@@ -26,6 +26,8 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 
+from src.validation.schema import validate_manifest_file
+
 
 # -------------------------------------
 # Utilities
@@ -837,6 +839,8 @@ def main():
     parser.add_argument("--manifest", type=str, required=True, help="Path to multiplex.json")
     parser.add_argument("--out_dir", type=str, default="./analysis_output_v3", help="Directory to save plots / reports")
     args = parser.parse_args()
+
+    validate_manifest_file(args.manifest)
 
     print("[*] Loading multiplex dataset from:", args.manifest)
     mani, nodes, labels, layers, df_events = load_multiplex(args.manifest)
