@@ -1,5 +1,5 @@
 """
-src/models/train_multitask_gnn_v3.py
+src/models/train_multitask_gnn_v2.py
 
 Multitask GNN trainer (v2) with a more robust, proven encoder:
 
@@ -26,7 +26,7 @@ Outputs:
   - multitask_plots_v2/ (curves)
 
 Example:
-  python src/models/train_multitask_gnn_v3.py \
+  python src/models/train_multitask_gnn_v2.py \
     --data_path data/multiplex_baseline/pyg_data.pt \
     --seed 2025 \
     --encoder transformer \
@@ -52,54 +52,6 @@ import torch.nn.functional as F
 
 from torch_geometric.data import Data
 from torch_geometric.nn import RGCNConv, TransformerConv
-
-
-# -----------------------------
-# Edge-attr transform utilities
-# -----------------------------
-def resolve_edge_attr_transform_np(
-    ea: np.ndarray,
-    mode: str = "auto",
-    q: float = 0.99,
-    thresh: float = 20.0,
-) -> str:
-    """Decide a *fixed* transform ('none' or 'log1p') for edge_attr.
-
-    - mode='none'  : use raw nonnegative values
-    - mode='log1p' : apply log1p
-    - mode='auto'  : apply log1p only if the distribution is heavy-tailed
-    """
-    mode = (mode or "auto").lower()
-    if mode in ("none", "raw"):
-        return "none"
-    if mode in ("log1p", "log"):
-        return "log1p"
-    # auto
-    ea = np.asarray(ea, dtype=np.float32).reshape(-1)
-    ea = np.clip(ea, 0.0, None)
-    if ea.size == 0:
-        return "none"
-    try:
-        qq = float(np.quantile(ea, q))
-    except Exception:
-        qq = float(ea.max())
-    mx = float(ea.max())
-    return "log1p" if (qq > float(thresh) or mx > float(thresh)) else "none"
-
-
-def transform_edge_attr_np(ea: np.ndarray, transform: str) -> np.ndarray:
-    ea = np.asarray(ea, dtype=np.float32)
-    ea = np.clip(ea, 0.0, None)
-    if transform == "log1p":
-        return np.log1p(ea)
-    return ea
-
-
-def transform_edge_attr_torch(ea: torch.Tensor, transform: str) -> torch.Tensor:
-    ea = ea.clamp(min=0.0)
-    if transform == "log1p":
-        return torch.log1p(ea)
-    return ea
 
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, average_precision_score, mean_squared_error, r2_score, roc_curve, brier_score_loss
 
@@ -190,9 +142,10 @@ class MultiTaskTransformer(nn.Module):
         dropout: float = 0.3,
         rel_emb_dim: int = 8,
         use_edge_attr: bool = True,
+        edge_attr_transform: str = "none",
         edge_attr_mean: float = 0.0,
         edge_attr_std: float = 1.0,
-        edge_attr_transform: str = "none",
+        include_edge_flags: bool = False,
     ):
         super().__init__()
         assert hidden_channels % heads == 0, "hidden_channels must be divisible by heads"
@@ -200,13 +153,16 @@ class MultiTaskTransformer(nn.Module):
         self.heads = heads
         self.num_relations = num_relations
         self.use_edge_attr = use_edge_attr
-        self.edge_attr_transform = (edge_attr_transform or "none").lower()
+        if edge_attr_transform not in {"none", "log1p", "auto"}:
+            raise ValueError(f"edge_attr_transform must be one of none/log1p/auto (got: {edge_attr_transform})")
+        self.edge_attr_transform = edge_attr_transform
+        self.include_edge_flags = include_edge_flags
 
         # Edge-type embedding (relation ID)
         self.rel_emb = nn.Embedding(num_relations, rel_emb_dim)
 
-        # Edge feature dimension: [edge_attr (optionally log1p), rel_emb]
-        self.edge_dim = (1 if use_edge_attr else 0) + rel_emb_dim
+        # Edge feature dimension: [edge_attr (optional), edge_is_false (optional), edge_is_copied (optional), rel_emb]
+        self.edge_dim = (1 if use_edge_attr else 0) + (2 if include_edge_flags else 0) + rel_emb_dim
 
         self.in_proj = nn.Linear(in_channels, hidden_channels)
 
@@ -251,10 +207,17 @@ class MultiTaskTransformer(nn.Module):
             nn.Linear(hidden_channels, 1),
         )
 
-    def _build_edge_feat(self, edge_type: torch.Tensor, edge_attr: Optional[torch.Tensor]) -> torch.Tensor:
+    def _build_edge_feat(
+        self,
+        edge_type: torch.Tensor,
+        edge_attr: Optional[torch.Tensor],
+        edge_is_false: Optional[torch.Tensor] = None,
+        edge_is_copied: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         rel = self.rel_emb(edge_type)  # [E, rel_emb_dim]
-        feats = [rel]
+        feats: list[torch.Tensor] = []
 
+        # edge_attr (scalar) -> optional
         if self.use_edge_attr:
             if edge_attr is None:
                 ea = torch.zeros((edge_type.size(0), 1), device=edge_type.device, dtype=torch.float32)
@@ -262,17 +225,40 @@ class MultiTaskTransformer(nn.Module):
                 ea = edge_attr.float()
                 if ea.dim() == 1:
                     ea = ea.view(-1, 1)
-                # optional transform + global z-score
-                ea = transform_edge_attr_torch(ea, self.edge_attr_transform)
+                # v3 default: edge_attr is already log-scaled by the dataset builder.
+                # Keep transform configurable for backward-compat with older datasets.
+                if self.edge_attr_transform == "log1p":
+                    ea = torch.log1p(ea.clamp(min=0.0))
+                elif self.edge_attr_transform == "auto":
+                    mx = float(ea.max().item()) if ea.numel() else 0.0
+                    if mx > 30.0:
+                        ea = torch.log1p(ea.clamp(min=0.0))
+                elif self.edge_attr_transform == "none":
+                    # no-op
+                    pass
                 ea = (ea - self.edge_attr_mean) / (self.edge_attr_std + 1e-8)
-            feats = [ea] + feats
+            feats.append(ea)
+
+        # edge flags -> optional
+        if self.include_edge_flags:
+            if edge_is_false is None:
+                f = torch.zeros((edge_type.size(0), 1), device=edge_type.device, dtype=torch.float32)
+            else:
+                f = edge_is_false.float().view(-1, 1)
+            if edge_is_copied is None:
+                c = torch.zeros((edge_type.size(0), 1), device=edge_type.device, dtype=torch.float32)
+            else:
+                c = edge_is_copied.float().view(-1, 1)
+            feats.append(torch.cat([f, c], dim=-1))
+
+        feats.append(rel)
 
         return torch.cat(feats, dim=-1)
 
-    def encode(self, x, edge_index, edge_type, edge_attr=None):
+    def encode(self, x, edge_index, edge_type, edge_attr=None, edge_is_false=None, edge_is_copied=None):
         h = self.in_proj(x)
         for conv, norm in zip(self.convs, self.norms):
-            edge_feat = self._build_edge_feat(edge_type, edge_attr)
+            edge_feat = self._build_edge_feat(edge_type, edge_attr, edge_is_false=edge_is_false, edge_is_copied=edge_is_copied)
             h_new = conv(h, edge_index, edge_attr=edge_feat)
             h_new = norm(h_new)
             h_new = F.relu(h_new)
@@ -280,8 +266,8 @@ class MultiTaskTransformer(nn.Module):
             h = h + h_new  # residual
         return h
 
-    def forward(self, x, edge_index, edge_type, edge_attr=None):
-        h = self.encode(x, edge_index, edge_type, edge_attr=edge_attr)
+    def forward(self, x, edge_index, edge_type, edge_attr=None, edge_is_false=None, edge_is_copied=None):
+        h = self.encode(x, edge_index, edge_type, edge_attr=edge_attr, edge_is_false=edge_is_false, edge_is_copied=edge_is_copied)
         role_logits = self.role_head(h)
         hvt_logits = self.hvt_head(h).view(-1)
         imp_pred = self.imp_head(h).view(-1)
@@ -331,7 +317,7 @@ class MultiTaskRGCN(nn.Module):
             nn.Linear(hidden_channels, 1),
         )
 
-    def encode(self, x, edge_index, edge_type, edge_attr=None):
+    def encode(self, x, edge_index, edge_type, edge_attr=None, edge_is_false=None, edge_is_copied=None):
         h = x
         for conv, norm in zip(self.convs, self.norms):
             h_new = conv(h, edge_index, edge_type)
@@ -341,8 +327,8 @@ class MultiTaskRGCN(nn.Module):
             h = h_new
         return h
 
-    def forward(self, x, edge_index, edge_type, edge_attr=None):
-        h = self.encode(x, edge_index, edge_type, edge_attr=edge_attr)
+    def forward(self, x, edge_index, edge_type, edge_attr=None, edge_is_false=None, edge_is_copied=None):
+        h = self.encode(x, edge_index, edge_type, edge_attr=edge_attr, edge_is_false=edge_is_false, edge_is_copied=edge_is_copied)
         return {
             "role_logits": self.role_head(h),
             "hvt_logits": self.hvt_head(h).view(-1),
@@ -387,12 +373,14 @@ def evaluate_split(
     edge_index = data.edge_index.to(device)
     edge_type = data.edge_type.to(device)
     edge_attr = data.edge_attr.to(device) if hasattr(data, "edge_attr") and data.edge_attr is not None else None
+    edge_is_false = data.edge_is_false.to(device) if hasattr(data, "edge_is_false") and getattr(data, "edge_is_false") is not None else None
+    edge_is_copied = data.edge_is_copied.to(device) if hasattr(data, "edge_is_copied") and getattr(data, "edge_is_copied") is not None else None
 
     y_role = data.y_role.to(device).long()
     y_hvt = data.y_hvt.to(device).float()
     imp = data.importance_score.to(device).float()
 
-    out = model(x, edge_index, edge_type, edge_attr=edge_attr)
+    out = model(x, edge_index, edge_type, edge_attr=edge_attr, edge_is_false=edge_is_false, edge_is_copied=edge_is_copied)
     role_logits = out["role_logits"]
     hvt_logits = out["hvt_logits"]
     imp_pred = out["imp_pred"]
@@ -761,27 +749,21 @@ def summarize_edges(data: Data, num_relations: int) -> Dict[str, Any]:
     return {"num_edges": int(data.edge_index.size(1)), "edges_per_relation": counts}
 
 
-def compute_edge_attr_stats(
-    data: Data,
-    mode: str = "auto",
-    auto_q: float = 0.99,
-    auto_thresh: float = 20.0,
-) -> Tuple[float, float, str]:
-    """Compute global mean/std for edge_attr after a *fixed* transform.
-
-    Returns:
-        mean: float
-        std:  float
-        transform: 'none' | 'log1p'
-    """
+def compute_edge_attr_stats(data: Data, transform: str = "none") -> Tuple[float, float]:
     if not hasattr(data, "edge_attr") or data.edge_attr is None:
-        return 0.0, 1.0, "none"
+        return 0.0, 1.0
     ea = data.edge_attr.view(-1).cpu().numpy().astype(np.float32)
-    transform = resolve_edge_attr_transform_np(ea, mode=mode, q=auto_q, thresh=auto_thresh)
-    ea_t = transform_edge_attr_np(ea, transform)
-    mean = float(ea_t.mean())
-    std = float(ea_t.std() + 1e-8)
-    return mean, std, transform
+    if transform not in {"none", "log1p", "auto"}:
+        raise ValueError(f"transform must be one of none/log1p/auto (got: {transform})")
+    if transform == "log1p":
+        ea = np.log1p(np.clip(ea, 0.0, None))
+    elif transform == "auto":
+        mx = float(np.max(ea)) if ea.size else 0.0
+        if mx > 30.0:
+            ea = np.log1p(np.clip(ea, 0.0, None))
+    mean = float(ea.mean())
+    std = float(ea.std() + 1e-8)
+    return mean, std
 
 
 # -----------------------------
@@ -789,7 +771,7 @@ def compute_edge_attr_stats(
 # -----------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Train multitask GNN (v3-compatible edge_attr handling).")
+    parser = argparse.ArgumentParser(description="Train multitask GNN (v3, compatible with build_pyg_dataset_v3.py).")
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--seed", type=int, default=2025)
 
@@ -801,28 +783,16 @@ def main():
     parser.add_argument("--dropout", type=float, default=0.3)
     parser.add_argument("--rel_emb_dim", type=int, default=8)
     parser.add_argument("--no_edge_attr", action="store_true", help="Disable edge_attr in encoder edge features (default: edge_attr enabled).")
-
-
-    # edge_attr transform (important for v3 datasets where edge_attr may already be log-scaled)
     parser.add_argument(
         "--edge_attr_transform",
         type=str,
-        default="auto",
-        choices=["auto", "none", "log1p"],
-        help="Transform for edge_attr before normalization. Use 'auto' to log1p only if heavy-tailed (recommended).",
+        default="none",
+        choices=["none", "log1p", "auto"],
+        help="Transform applied to edge_attr inside the encoder edge features before z-score. For v3 datasets, default 'none' (edge_attr already log-scaled).",
     )
-    parser.add_argument(
-        "--edge_attr_auto_q",
-        type=float,
-        default=0.99,
-        help="Quantile used by edge_attr_transform=auto (default: 0.99).",
-    )
-    parser.add_argument(
-        "--edge_attr_auto_thresh",
-        type=float,
-        default=20.0,
-        help="If quantile(edge_attr) > thresh, auto uses log1p; otherwise uses none (default: 20.0).",
-    )
+
+    parser.add_argument("--include_edge_flags", action="store_true",
+                        help="Include edge_is_false/edge_is_copied as additional edge features (requires build_pyg_dataset_v3 with flags).")
 
     # edge filtering / balancing (helps with extreme relation imbalance)
     parser.add_argument("--drop_relations", type=str, default="", help="Comma-separated relation IDs to drop (applied to train & eval). Example: '4'")
@@ -926,6 +896,10 @@ def main():
             data.edge_type = data.edge_type[keep]
             if hasattr(data, "edge_attr") and data.edge_attr is not None:
                 data.edge_attr = data.edge_attr[keep]
+            if hasattr(data, "edge_is_false") and getattr(data, "edge_is_false") is not None:
+                data.edge_is_false = data.edge_is_false[keep]
+            if hasattr(data, "edge_is_copied") and getattr(data, "edge_is_copied") is not None:
+                data.edge_is_copied = data.edge_is_copied[keep]
 
             print(f"[*] drop_relations: dropped={drop_rel_ids} | edges {before} -> {after}")
 
@@ -935,6 +909,9 @@ def main():
         print("[*] generator_config:", {k: gen_cfg.get(k) for k in ["seed","hvt_ratio","finance_structure_strength","comm_structure_strength","comm_randomness"]})
     else:
         print("[*] generator_config: (not available)")
+
+    if args.include_edge_flags and not hasattr(data, "edge_is_false"):
+        print("[!] include_edge_flags enabled, but dataset has no edge_is_false/edge_is_copied attributes. Flags will be zeros.")
 
     num_roles = int(data.y_role.max().item() + 1)
     num_relations = int(data.edge_type.max().item() + 1)
@@ -948,9 +925,8 @@ def main():
     print(f"[*] importance_score (from Data meta) mean={imp_mean:.3f}, std={imp_std:.3f}")
 
     # edge_attr stats (for transformer edge features)
-    ea_mean, ea_std, ea_transform = compute_edge_attr_stats(data, mode=args.edge_attr_transform, auto_q=args.edge_attr_auto_q, auto_thresh=args.edge_attr_auto_thresh)
-    print(f"[*] edge_attr_transform resolved: {ea_transform} (mean={ea_mean:.4f}, std={ea_std:.4f})")
-    print(f"[*] edge_attr log1p stats mean={ea_mean:.3f}, std={ea_std:.3f}")
+    ea_mean, ea_std = compute_edge_attr_stats(data, transform=str(args.edge_attr_transform))
+    print(f"[*] edge_attr ({args.edge_attr_transform}) stats mean={ea_mean:.3f}, std={ea_std:.3f}")
 
     # weights
     train_mask = data.train_mask
@@ -989,9 +965,10 @@ def main():
             dropout=args.dropout,
             rel_emb_dim=args.rel_emb_dim,
             use_edge_attr=use_edge_attr,
+            edge_attr_transform=str(args.edge_attr_transform),
             edge_attr_mean=ea_mean,
             edge_attr_std=ea_std,
-            edge_attr_transform=ea_transform,
+            include_edge_flags=bool(args.include_edge_flags),
         )
     else:
         model = MultiTaskRGCN(
@@ -1044,6 +1021,8 @@ def main():
     edge_index = data.edge_index.to(device)
     edge_type = data.edge_type.to(device)
     edge_attr = data.edge_attr.to(device) if hasattr(data, "edge_attr") and data.edge_attr is not None else None
+    edge_is_false = data.edge_is_false.to(device) if hasattr(data, "edge_is_false") and getattr(data, "edge_is_false") is not None else None
+    edge_is_copied = data.edge_is_copied.to(device) if hasattr(data, "edge_is_copied") and getattr(data, "edge_is_copied") is not None else None
 
     # Precompute per-relation edge indices for optional relation-balanced TRAIN sampling.
     # (Evaluation always uses the full graph.)
@@ -1089,7 +1068,7 @@ def main():
 
         optimizer.zero_grad(set_to_none=True)
 
-        ei, et, ea = edge_index, edge_type, edge_attr
+        ei, et, ea, ef, ec = edge_index, edge_type, edge_attr, edge_is_false, edge_is_copied
         if rel_edge_indices is not None and edge_balance_target is not None and model.training:
             sampled = []
             for r, idx_r in enumerate(rel_edge_indices):
@@ -1103,8 +1082,10 @@ def main():
             ei = edge_index[:, sel]
             et = edge_type[sel]
             ea = edge_attr[sel] if edge_attr is not None else None
+            ef = edge_is_false[sel] if edge_is_false is not None else None
+            ec = edge_is_copied[sel] if edge_is_copied is not None else None
 
-        out = model(x, ei, et, edge_attr=ea)
+        out = model(x, ei, et, edge_attr=ea, edge_is_false=ef, edge_is_copied=ec)
         role_logits = out["role_logits"]
         hvt_logits = out["hvt_logits"]
         imp_pred = out["imp_pred"]
@@ -1230,8 +1211,8 @@ def main():
     if uw is not None:
         uw.eval()
     with torch.no_grad():
-        ei, et, ea = edge_index, edge_type, edge_attr
-        out = model(x, ei, et, edge_attr=ea)
+        ei, et, ea, ef, ec = edge_index, edge_type, edge_attr, edge_is_false, edge_is_copied
+        out = model(x, ei, et, edge_attr=ea, edge_is_false=ef, edge_is_copied=ec)
         logits_hvt = out["hvt_logits"].view(-1)
         hvt_prob_uncal = torch.sigmoid(logits_hvt).detach().cpu().numpy()
 

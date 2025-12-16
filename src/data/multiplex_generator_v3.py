@@ -25,6 +25,10 @@ class Node:
     skill_level: float = 0.0
     radicalization: float = 0.0
     past_incidents: float = 0.0
+    # dynamics / observation
+    activity_rate: float = 1.0  # fraction of days active (used by on/off activity)
+    observability: float = 1.0  # surveillance/measurement likelihood (used by biased observation)
+
 
     # labels / targets
     importance_score: float = 0.0
@@ -133,6 +137,22 @@ class GeneratorConfig:
     campaign_count: int = 3
     campaign_length: int = 20
 
+    # activity on/off (node-level; impacts event generation)
+    activity_onoff: bool = False
+    activity_p_off_to_on: float = 0.03  # OFF->ON probability per day
+    activity_p_on_to_off: float = 0.05  # ON->OFF probability per day
+    activity_role_multiplier: Optional[Dict[str, float]] = None
+
+    # biased observation (node-level observability; impacts edge missingness / false edges)
+    observation_bias: bool = False
+    observability_role_weight: Optional[Dict[str, float]] = None
+    observability_region_weight: Optional[Dict[str, float]] = None
+    obs_missing_bias_strength: float = 0.0  # >0 => low-observability nodes lose more edges
+    obs_false_edge_bias_gamma: float = 0.0  # >0 => false edges prefer high-observability nodes
+
+    # cross-layer edge copy (increase overlap/correlation across layers)
+    cross_layer_copy: Optional[List[Dict[str, Any]]] = None
+
     # HVT
     hvt_ratio: float = 0.05
 
@@ -183,6 +203,31 @@ ROLE_TIER = {
     "courier": 2,
     "support": 3,
 }
+
+DEFAULT_ACTIVITY_ROLE_MULTIPLIER: Dict[str, float] = {
+    "leader": 0.9,
+    "financier": 1.0,
+    "operative": 1.2,
+    "courier": 1.3,
+    "support": 0.8,
+}
+
+DEFAULT_OBSERVABILITY_ROLE_WEIGHT: Dict[str, float] = {
+    "leader": 1.3,
+    "financier": 1.1,
+    "operative": 1.0,
+    "courier": 0.9,
+    "support": 0.8,
+}
+
+# Regions are configurable; these weights are only used when the region string matches.
+DEFAULT_OBSERVABILITY_REGION_WEIGHT: Dict[str, float] = {
+    "MiddleEast": 1.2,
+    "Europe": 1.0,
+    "Asia": 0.95,
+    "Africa": 0.85,
+}
+
 
 
 # -----------------------------
@@ -285,6 +330,196 @@ def generate_nodes(cfg: GeneratorConfig) -> List[Node]:
 # Hierarchy layer
 # -----------------------------
 
+
+# -----------------------------
+# Activity on/off + biased observation helpers
+# -----------------------------
+
+
+def compute_observability_scores(cfg: GeneratorConfig, nodes: List[Node]) -> np.ndarray:
+    """Return per-node observability scores in [0,1]."""
+    n = len(nodes)
+    if not bool(getattr(cfg, "observation_bias", False)) or n == 0:
+        return np.ones(n, dtype=np.float32)
+
+    role_w = cfg.observability_role_weight or DEFAULT_OBSERVABILITY_ROLE_WEIGHT
+    region_w = cfg.observability_region_weight or DEFAULT_OBSERVABILITY_REGION_WEIGHT
+
+    raw = np.array(
+        [float(role_w.get(nd.role, 1.0)) * float(region_w.get(nd.region, 1.0)) for nd in nodes],
+        dtype=np.float32,
+    )
+    raw = raw / (float(raw.max()) + 1e-12)
+    raw = raw + np.random.normal(loc=0.0, scale=0.03, size=n).astype(np.float32)
+    raw = np.clip(raw, 0.05, 1.0)
+    return raw.astype(np.float32)
+
+
+def generate_activity_matrix(cfg: GeneratorConfig, nodes: List[Node]) -> Tuple[np.ndarray, np.ndarray]:
+    """Return (active[N,T] bool, activity_rate[N] float)."""
+    num_nodes = len(nodes)
+    T = int(getattr(cfg, "num_days", 1))
+    if T <= 0:
+        T = 1
+
+    if not bool(getattr(cfg, "activity_onoff", False)) or num_nodes == 0:
+        active = np.ones((num_nodes, T), dtype=bool)
+        rates = np.ones(num_nodes, dtype=np.float32)
+        return active, rates
+
+    role_mult = cfg.activity_role_multiplier or DEFAULT_ACTIVITY_ROLE_MULTIPLIER
+    p01_base = float(np.clip(cfg.activity_p_off_to_on, 0.0, 1.0))
+    p10_base = float(np.clip(cfg.activity_p_on_to_off, 0.0, 1.0))
+
+    active = np.zeros((num_nodes, T), dtype=bool)
+    rates = np.zeros(num_nodes, dtype=np.float32)
+
+    for i, nd in enumerate(nodes):
+        m = float(role_mult.get(nd.role, 1.0))
+        # Higher m => more active on average: increase OFF->ON, decrease ON->OFF
+        p01 = float(np.clip(p01_base * m, 0.0, 1.0))
+        p10 = float(np.clip(p10_base / max(m, 1e-6), 0.0, 1.0))
+
+        denom = p01 + p10
+        p_on = (p01 / denom) if denom > 0 else 0.5
+        state = bool(np.random.rand() < p_on)
+
+        for t in range(T):
+            active[i, t] = state
+            if state:
+                if np.random.rand() < p10:
+                    state = False
+            else:
+                if np.random.rand() < p01:
+                    state = True
+
+        rates[i] = float(active[i].mean())
+
+    return active, rates
+
+
+def _edge_key(u: int, v: int, directed: bool) -> Tuple[int, int]:
+    if directed:
+        return (int(u), int(v))
+    a, b = (int(u), int(v)) if int(u) < int(v) else (int(v), int(u))
+    return (a, b)
+
+
+def apply_cross_layer_edge_copy(
+    cfg: GeneratorConfig,
+    layer_edges: Dict[str, List[Edge]],
+    layer_directed: Dict[str, bool],
+) -> Tuple[Dict[str, List[Edge]], Dict[str, Dict[Tuple[int, int], str]]]:
+    """Copy a fraction of edges from one layer to another.
+
+    cfg.cross_layer_copy: list of dicts, each with:
+      - src: str layer name
+      - dst: str layer name
+      - rate: float in [0,1]
+      - preserve_direction: bool (optional; only relevant when src and dst are directed)
+      - direction_mode: str (optional; when src is undirected and dst is directed: 'random'|'both'|'min_to_max'|'max_to_min')
+    """
+    specs = cfg.cross_layer_copy or []
+    if not specs:
+        provenance = {k: {} for k in layer_edges.keys()}
+        return layer_edges, provenance
+
+    # current key sets
+    key_sets: Dict[str, set] = {}
+    for lname, edges in layer_edges.items():
+        directed = bool(layer_directed.get(lname, False))
+        s = set()
+        for e in edges:
+            k = _edge_key(e.source, e.target, directed)
+            if k[0] != k[1]:
+                s.add(k)
+        key_sets[lname] = s
+
+    provenance: Dict[str, Dict[Tuple[int, int], str]] = {k: {} for k in layer_edges.keys()}
+
+    for spec in specs:
+        if not isinstance(spec, dict):
+            continue
+        src = spec.get("src")
+        dst = spec.get("dst")
+        rate = float(spec.get("rate", 0.0))
+        if src not in key_sets or dst not in key_sets:
+            continue
+        if rate <= 0.0:
+            continue
+
+        src_directed = bool(layer_directed.get(src, False))
+        dst_directed = bool(layer_directed.get(dst, False))
+
+        src_keys = list(key_sets[src])
+        if not src_keys:
+            continue
+
+        n_pick = int(round(rate * len(src_keys)))
+        n_pick = max(0, min(n_pick, len(src_keys)))
+        if n_pick <= 0:
+            continue
+
+        pick_idx = np.random.choice(len(src_keys), size=n_pick, replace=False)
+        preserve_direction = bool(spec.get("preserve_direction", True))
+        direction_mode = str(spec.get("direction_mode", "random"))
+
+        for j in pick_idx:
+            k = src_keys[int(j)]
+
+            # translate into dst key(s)
+            dst_keys: List[Tuple[int, int]] = []
+            if src_directed:
+                u, v = int(k[0]), int(k[1])
+                if dst_directed:
+                    if preserve_direction:
+                        dst_keys = [(u, v)]
+                    else:
+                        dst_keys = [(u, v)] if np.random.rand() < 0.5 else [(v, u)]
+                else:
+                    dst_keys = [_edge_key(u, v, directed=False)]
+            else:
+                a, b = int(k[0]), int(k[1])
+                if dst_directed:
+                    if direction_mode == "both":
+                        dst_keys = [(a, b), (b, a)]
+                    elif direction_mode == "min_to_max":
+                        dst_keys = [(a, b)]
+                    elif direction_mode == "max_to_min":
+                        dst_keys = [(b, a)]
+                    else:  # random
+                        dst_keys = [(a, b)] if np.random.rand() < 0.5 else [(b, a)]
+                else:
+                    dst_keys = [(a, b)]
+
+            for dk in dst_keys:
+                dk = _edge_key(dk[0], dk[1], directed=dst_directed)
+                if dk[0] == dk[1]:
+                    continue
+                if dk in key_sets[dst]:
+                    continue
+                key_sets[dst].add(dk)
+                provenance[dst][dk] = str(src)
+
+    # rebuild lists (preserve original order, append newly copied edges)
+    rebuilt: Dict[str, List[Edge]] = {}
+    for lname, edges in layer_edges.items():
+        directed = bool(layer_directed.get(lname, False))
+        seen = set()
+        ordered: List[Tuple[int, int]] = []
+        for e in edges:
+            k = _edge_key(e.source, e.target, directed)
+            if k[0] == k[1] or k in seen:
+                continue
+            seen.add(k)
+            ordered.append(k)
+
+        new_keys = [k for k in key_sets[lname] if k not in seen]
+        new_keys = sorted(new_keys)
+        all_keys = ordered + new_keys
+        rebuilt[lname] = [Edge(source=int(k[0]), target=int(k[1])) for k in all_keys]
+
+    return rebuilt, provenance
 
 def build_hierarchy_edges(nodes: List[Node]) -> List[Edge]:
     leaders = [n.id for n in nodes if n.role == "leader"]
@@ -659,8 +894,18 @@ def apply_edge_observation_noise(
     directed: bool,
     missing_rate: float,
     false_rate: float,
+    obs_scores: Optional[np.ndarray] = None,
+    missing_bias_strength: float = 0.0,
+    false_bias_gamma: float = 0.0,
 ) -> Tuple[List[Edge], Dict[Tuple[int, int], int]]:
-    """Return (noised_edges, false_edge_flags). false_edge_flags[(u,v)]=1 for added false edges."""
+    """Return (noised_edges, false_edge_flags).
+
+    - missing_rate: fraction of *true* edges that are dropped.
+    - false_rate: fraction of *kept* edges to add as false positives.
+    - obs_scores: per-node observability in [0,1]. If provided:
+        * missing_bias_strength > 0 biases missingness toward low-observability nodes
+        * false_bias_gamma > 0 biases false edges toward high-observability nodes
+    """
     if edges is None:
         edges = []
 
@@ -668,63 +913,89 @@ def apply_edge_observation_noise(
     false = float(np.clip(false_rate, 0.0, 1.0))
 
     def _key(u: int, v: int) -> Tuple[int, int]:
-        if directed:
-            return (int(u), int(v))
-        a, b = (int(u), int(v)) if int(u) < int(v) else (int(v), int(u))
-        return (a, b)
+        return _edge_key(u, v, directed=directed)
 
     # de-duplicate first
-    existing_keys = []
+    existing_keys: List[Tuple[int, int]] = []
     seen = set()
     for e in edges:
         k = _key(e.source, e.target)
-        if k not in seen and k[0] != k[1]:
-            seen.add(k)
-            existing_keys.append(k)
+        if k[0] == k[1] or k in seen:
+            continue
+        seen.add(k)
+        existing_keys.append(k)
 
-    # missing: randomly drop a fraction
+    # -------------------------
+    # missing edges
+    # -------------------------
     n_drop = int(round(len(existing_keys) * miss))
     keep_mask = np.ones(len(existing_keys), dtype=bool)
+
     if n_drop > 0 and len(existing_keys) > 0:
-        drop_idx = np.random.choice(len(existing_keys), size=min(n_drop, len(existing_keys)), replace=False)
+        if obs_scores is not None and missing_bias_strength > 0.0:
+            obs = np.asarray(obs_scores, dtype=np.float32)
+            w = []
+            for (u, v) in existing_keys:
+                mu = float(obs[int(u)]) if 0 <= int(u) < len(obs) else 1.0
+                mv = float(obs[int(v)]) if 0 <= int(v) < len(obs) else 1.0
+                mean_obs = 0.5 * (mu + mv)
+                # low observability => higher drop weight
+                ww = 1.0 + float(missing_bias_strength) * (1.0 - mean_obs)
+                w.append(max(1e-6, ww))
+            w = np.asarray(w, dtype=np.float64)
+            p = w / (w.sum() + 1e-12)
+            drop_idx = np.random.choice(len(existing_keys), size=min(n_drop, len(existing_keys)), replace=False, p=p)
+        else:
+            drop_idx = np.random.choice(len(existing_keys), size=min(n_drop, len(existing_keys)), replace=False)
+
         keep_mask[drop_idx] = False
 
     kept_keys = [k for i, k in enumerate(existing_keys) if bool(keep_mask[i])]
 
-    # false: add new random edges
+    # -------------------------
+    # false edges
+    # -------------------------
     n_add_target = int(round(len(kept_keys) * false))
     false_flags: Dict[Tuple[int, int], int] = {}
 
     kept_set = set(kept_keys)
-    tries = 0
-    while len(false_flags) < n_add_target and tries < max(1000, n_add_target * 50):
-        tries += 1
-        u = int(np.random.randint(0, num_nodes))
-        v = int(np.random.randint(0, num_nodes - 1))
-        if v >= u:
-            v += 1
-        k = _key(u, v)
-        if k[0] == k[1]:
-            continue
-        if k in kept_set or k in false_flags:
-            continue
-        false_flags[k] = 1
+
+    if n_add_target > 0 and num_nodes > 1:
+        if obs_scores is not None and false_bias_gamma > 0.0:
+            obs = np.asarray(obs_scores, dtype=np.float64)
+            obs = np.clip(obs, 1e-6, 1.0)
+            w_nodes = np.power(obs, float(false_bias_gamma))
+            w_nodes = w_nodes / (w_nodes.sum() + 1e-12)
+        else:
+            w_nodes = None
+
+        tries = 0
+        max_tries = max(2000, n_add_target * 100)
+        while len(false_flags) < n_add_target and tries < max_tries:
+            tries += 1
+            if w_nodes is None:
+                u = int(np.random.randint(0, num_nodes))
+                v = int(np.random.randint(0, num_nodes - 1))
+                if v >= u:
+                    v += 1
+            else:
+                u = int(np.random.choice(num_nodes, p=w_nodes))
+                v = int(np.random.choice(num_nodes, p=w_nodes))
+                if v == u:
+                    continue
+
+            k = _key(u, v)
+            if k[0] == k[1]:
+                continue
+            if k in kept_set or k in false_flags:
+                continue
+            false_flags[k] = 1
 
     # rebuild Edge list
-    out_edges: List[Edge] = []
-    for k in kept_keys:
-        out_edges.append(Edge(source=k[0], target=k[1]))
-
-    for k in false_flags.keys():
-        out_edges.append(Edge(source=k[0], target=k[1]))
+    out_edges: List[Edge] = [Edge(source=int(k[0]), target=int(k[1])) for k in kept_keys]
+    out_edges.extend([Edge(source=int(k[0]), target=int(k[1])) for k in false_flags.keys()])
 
     return out_edges, false_flags
-
-
-# -----------------------------
-# Events with (optional) temporal burstiness + missingness
-# -----------------------------
-
 
 def _make_campaign_windows(cfg: GeneratorConfig) -> List[Tuple[int, int]]:
     # windows represented as (center, half_length)
@@ -762,10 +1033,24 @@ def build_events(
     false_fin: Dict[Tuple[int, int], int],
     false_comm: Dict[Tuple[int, int], int],
     false_op: Dict[Tuple[int, int], int],
+    active: Optional[np.ndarray] = None,
+    max_resample: int = 12,
 ) -> List[Event]:
     windows = _make_campaign_windows(cfg)
-
     events: List[Event] = []
+
+    def _sample_time_active(u: int, v: int) -> Optional[int]:
+        if active is None:
+            return _sample_time(cfg, windows)
+        T = int(cfg.num_days)
+        if T <= 0:
+            return 0
+        for _ in range(max(1, int(max_resample))):
+            t = _sample_time(cfg, windows)
+            if 0 <= u < active.shape[0] and 0 <= v < active.shape[0] and 0 <= t < active.shape[1]:
+                if bool(active[u, t]) and bool(active[v, t]):
+                    return int(t)
+        return None
 
     # finance -> txn (directed)
     for e in finance_edges:
@@ -773,49 +1058,47 @@ def build_events(
         if (e.source, e.target) in false_fin:
             k = max(1, int(round(k * cfg.false_edge_event_scale)))
         for _ in range(k):
-            t = _sample_time(cfg, windows)
+            t = _sample_time_active(int(e.source), int(e.target))
+            if t is None:
+                continue
             amount = float(np.random.lognormal(mean=8.0, sigma=1.0))
-            events.append(Event(time=t, event_type="txn", u=e.source, v=e.target, meta={"amount": amount}))
+            events.append(Event(time=int(t), event_type="txn", u=int(e.source), v=int(e.target), meta={"amount": amount}))
 
     # communication -> comm (undirected)
     for e in comm_edges:
-        a, b = (e.source, e.target) if e.source < e.target else (e.target, e.source)
+        a, b = (int(e.source), int(e.target)) if int(e.source) < int(e.target) else (int(e.target), int(e.source))
         k = int(np.random.randint(cfg.comm_events_min, cfg.comm_events_max + 1))
         if (a, b) in false_comm:
             k = max(1, int(round(k * cfg.false_edge_event_scale)))
         for _ in range(k):
-            t = _sample_time(cfg, windows)
+            t = _sample_time_active(a, b)
+            if t is None:
+                continue
             duration = int(np.random.exponential(scale=5.0))
-            events.append(Event(time=t, event_type="comm", u=a, v=b, meta={"duration": duration}))
+            events.append(Event(time=int(t), event_type="comm", u=a, v=b, meta={"duration": duration}))
 
     # operation -> op (undirected)
     for e in op_edges:
-        a, b = (e.source, e.target) if e.source < e.target else (e.target, e.source)
+        a, b = (int(e.source), int(e.target)) if int(e.source) < int(e.target) else (int(e.target), int(e.source))
         k = int(np.random.randint(cfg.op_events_min, cfg.op_events_max + 1))
         if (a, b) in false_op:
             k = max(1, int(round(k * cfg.false_edge_event_scale)))
         for _ in range(k):
-            t = _sample_time(cfg, windows)
-            events.append(Event(time=t, event_type="op", u=a, v=b, meta={}))
+            t = _sample_time_active(a, b)
+            if t is None:
+                continue
+            events.append(Event(time=int(t), event_type="op", u=a, v=b, meta={}))
 
     # event missingness
     if cfg.missing_event_rate_txn > 0:
-        keep = [ev for ev in events if ev.event_type != "txn" or np.random.rand() > cfg.missing_event_rate_txn]
-        events = keep
+        events = [ev for ev in events if ev.event_type != "txn" or np.random.rand() > cfg.missing_event_rate_txn]
     if cfg.missing_event_rate_comm > 0:
-        keep = [ev for ev in events if ev.event_type != "comm" or np.random.rand() > cfg.missing_event_rate_comm]
-        events = keep
+        events = [ev for ev in events if ev.event_type != "comm" or np.random.rand() > cfg.missing_event_rate_comm]
     if cfg.missing_event_rate_op > 0:
-        keep = [ev for ev in events if ev.event_type != "op" or np.random.rand() > cfg.missing_event_rate_op]
-        events = keep
+        events = [ev for ev in events if ev.event_type != "op" or np.random.rand() > cfg.missing_event_rate_op]
 
     events.sort(key=lambda ev: (int(ev.time), str(ev.event_type)))
     return events
-
-
-# -----------------------------
-# importance_score & HVT computation
-# -----------------------------
 
 
 def compute_importance_and_hvt(
@@ -921,11 +1204,31 @@ def aggregate_event_stats(events: List[Event]) -> Tuple[Dict[Tuple[int, int], Di
 
 
 def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
+    """Generate a multiplex manifest (v3) with optional:
+    - node activity on/off (affects event generation)
+    - biased observation (affects edge missingness / false edges)
+    - cross-layer edge copy (increases overlap across layers)
+
+    Output schema is compatible with build_pyg_dataset_v3.py.
+    """
     set_seed(cfg.seed)
 
     nodes = generate_nodes(cfg)
+    num_nodes = int(cfg.size)
 
+    # --------------------------------------------------
+    # 0) node-level activity + observability
+    # --------------------------------------------------
+    obs_scores = compute_observability_scores(cfg, nodes)
+    active_mat, activity_rates = generate_activity_matrix(cfg, nodes)
+
+    for i, nd in enumerate(nodes):
+        nd.observability = float(obs_scores[i]) if i < len(obs_scores) else 1.0
+        nd.activity_rate = float(activity_rates[i]) if i < len(activity_rates) else 1.0
+
+    # --------------------------------------------------
     # 1) base layers
+    # --------------------------------------------------
     hierarchy_edges = build_hierarchy_edges(nodes)
 
     fs = float(cfg.finance_structure_strength)
@@ -939,68 +1242,116 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
         base_bias=cfg.finance_base_bias,
     )
 
+    # ideology and operation first (communication depends on finance/hierarchy)
     ideology_edges = build_ideology_edges(nodes, threshold=cfg.ideo_threshold)
-
     operation_edges, _ = build_operation_edges(nodes, cfg)
 
     cs = float(cfg.comm_structure_strength)
-    alpha_group = cfg.comm_alpha_group * cs
-    alpha_region = cfg.comm_alpha_region * cs
-    alpha_hier = cfg.comm_alpha_hier * cs
-    alpha_fin = cfg.comm_alpha_fin * cs
-    alpha0 = cfg.comm_alpha0
+    cr = float(cfg.comm_randomness)
 
     communication_edges = build_communication_edges(
         nodes,
-        hierarchy_edges=hierarchy_edges,
-        finance_edges=finance_edges,
+        hierarchy_edges,
+        finance_edges,
         avg_degree=cfg.comm_avg_degree,
-        alpha0=alpha0,
-        alpha_group=alpha_group,
-        alpha_region=alpha_region,
-        alpha_hier=alpha_hier,
-        alpha_fin=alpha_fin,
-        randomness=cfg.comm_randomness,
+        alpha0=cfg.comm_alpha0 * (1.0 + cr),
+        alpha_group=cfg.comm_alpha_group * cs,
+        alpha_region=cfg.comm_alpha_region * cs,
+        alpha_hier=cfg.comm_alpha_hier * cs,
+        alpha_fin=cfg.comm_alpha_fin * cs,
+        randomness=cr,
     )
 
-    # 2) observation noise (edges)
+    # --------------------------------------------------
+    # 1b) cross-layer edge copy (optional)
+    # --------------------------------------------------
+    layer_edges = {
+        "hierarchy": hierarchy_edges,
+        "finance": finance_edges,
+        "communication": communication_edges,
+        "operation": operation_edges,
+        "ideology": ideology_edges,
+    }
+    layer_directed = {
+        "hierarchy": True,
+        "finance": True,
+        "communication": False,
+        "operation": False,
+        "ideology": False,
+    }
+
+    layer_edges, copy_provenance = apply_cross_layer_edge_copy(cfg, layer_edges, layer_directed)
+    hierarchy_edges = layer_edges["hierarchy"]
+    finance_edges = layer_edges["finance"]
+    communication_edges = layer_edges["communication"]
+    operation_edges = layer_edges["operation"]
+    ideology_edges = layer_edges["ideology"]
+
+    # --------------------------------------------------
+    # 2) observation noise (optional; per-layer rates)
+    # --------------------------------------------------
+    obs_for_noise = obs_scores if bool(cfg.observation_bias) else None
+    miss_bias = float(cfg.obs_missing_bias_strength) if bool(cfg.observation_bias) else 0.0
+    false_gamma = float(cfg.obs_false_edge_bias_gamma) if bool(cfg.observation_bias) else 0.0
+
     hierarchy_edges, false_hier = apply_edge_observation_noise(
         hierarchy_edges,
-        num_nodes=cfg.size,
+        num_nodes=num_nodes,
         directed=True,
-        missing_rate=cfg.missing_edge_rate_hierarchy,
-        false_rate=cfg.false_edge_rate_hierarchy,
-    )
-    finance_edges, false_fin = apply_edge_observation_noise(
-        finance_edges,
-        num_nodes=cfg.size,
-        directed=True,
-        missing_rate=cfg.missing_edge_rate_finance,
-        false_rate=cfg.false_edge_rate_finance,
-    )
-    communication_edges, false_comm = apply_edge_observation_noise(
-        communication_edges,
-        num_nodes=cfg.size,
-        directed=False,
-        missing_rate=cfg.missing_edge_rate_communication,
-        false_rate=cfg.false_edge_rate_communication,
-    )
-    operation_edges, false_op = apply_edge_observation_noise(
-        operation_edges,
-        num_nodes=cfg.size,
-        directed=False,
-        missing_rate=cfg.missing_edge_rate_operation,
-        false_rate=cfg.false_edge_rate_operation,
-    )
-    ideology_edges, false_ideo = apply_edge_observation_noise(
-        ideology_edges,
-        num_nodes=cfg.size,
-        directed=False,
-        missing_rate=cfg.missing_edge_rate_ideology,
-        false_rate=cfg.false_edge_rate_ideology,
+        missing_rate=float(cfg.missing_edge_rate_hierarchy),
+        false_rate=float(cfg.false_edge_rate_hierarchy),
+        obs_scores=obs_for_noise,
+        missing_bias_strength=miss_bias,
+        false_bias_gamma=false_gamma,
     )
 
-    # 3) events (generated on observed edges)
+    finance_edges, false_fin = apply_edge_observation_noise(
+        finance_edges,
+        num_nodes=num_nodes,
+        directed=True,
+        missing_rate=float(cfg.missing_edge_rate_finance),
+        false_rate=float(cfg.false_edge_rate_finance),
+        obs_scores=obs_for_noise,
+        missing_bias_strength=miss_bias,
+        false_bias_gamma=false_gamma,
+    )
+
+    communication_edges, false_comm = apply_edge_observation_noise(
+        communication_edges,
+        num_nodes=num_nodes,
+        directed=False,
+        missing_rate=float(cfg.missing_edge_rate_communication),
+        false_rate=float(cfg.false_edge_rate_communication),
+        obs_scores=obs_for_noise,
+        missing_bias_strength=miss_bias,
+        false_bias_gamma=false_gamma,
+    )
+
+    operation_edges, false_op = apply_edge_observation_noise(
+        operation_edges,
+        num_nodes=num_nodes,
+        directed=False,
+        missing_rate=float(cfg.missing_edge_rate_operation),
+        false_rate=float(cfg.false_edge_rate_operation),
+        obs_scores=obs_for_noise,
+        missing_bias_strength=miss_bias,
+        false_bias_gamma=false_gamma,
+    )
+
+    ideology_edges, false_ideo = apply_edge_observation_noise(
+        ideology_edges,
+        num_nodes=num_nodes,
+        directed=False,
+        missing_rate=float(cfg.missing_edge_rate_ideology),
+        false_rate=float(cfg.false_edge_rate_ideology),
+        obs_scores=obs_for_noise,
+        missing_bias_strength=miss_bias,
+        false_bias_gamma=false_gamma,
+    )
+
+    # --------------------------------------------------
+    # 3) events (affected by activity on/off + edge false-positives)
+    # --------------------------------------------------
     events = build_events(
         cfg,
         finance_edges=finance_edges,
@@ -1009,85 +1360,95 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
         false_fin=false_fin,
         false_comm=false_comm,
         false_op=false_op,
+        active=active_mat,
     )
 
-    # 4) importance/HVT
+    # --------------------------------------------------
+    # 4) node targets (importance/HVT)
+    # --------------------------------------------------
     compute_importance_and_hvt(
         nodes,
         hierarchy_edges=hierarchy_edges,
         finance_edges=finance_edges,
         comm_edges=communication_edges,
         events=events,
-        hvt_ratio=cfg.hvt_ratio,
+        hvt_ratio=float(cfg.hvt_ratio),
     )
 
-    # 5) attach aggregated edge statistics
+    # --------------------------------------------------
+    # 5) aggregate per-edge stats from events
+    # --------------------------------------------------
     txn_stats, comm_stats, op_stats = aggregate_event_stats(events)
+    id_to_node: Dict[int, Node] = {n.id: n for n in nodes}
 
-    id_to_node = {n.id: n for n in nodes}
+    # --------------------------------------------------
+    # 6) assemble manifest
+    # --------------------------------------------------
+    def _k(u: int, v: int, directed: bool) -> Tuple[int, int]:
+        return _edge_key(int(u), int(v), directed=directed)
 
-    def _edge_dict(e: Edge) -> Dict[str, Any]:
-        return {"source": int(e.source), "target": int(e.target)}
-
-    # hierarchy
-    hier_edges_out = []
+    # hierarchy (directed)
+    hier_edges_out: List[Dict[str, Any]] = []
     for e in hierarchy_edges:
-        d = _edge_dict(e)
-        d["is_false"] = int((e.source, e.target) in false_hier)
+        k = _k(e.source, e.target, directed=True)
+        d: Dict[str, Any] = {"source": int(k[0]), "target": int(k[1])}
+        d["is_false"] = int(k in false_hier)
+        d["copied_from"] = copy_provenance.get("hierarchy", {}).get(k)
         hier_edges_out.append(d)
 
-    # finance
-    fin_edges_out = []
+    # finance (directed)
+    fin_edges_out: List[Dict[str, Any]] = []
     for e in finance_edges:
-        k = (int(e.source), int(e.target))
-        d = _edge_dict(e)
+        k = _k(e.source, e.target, directed=True)
+        st = txn_stats.get(k, {"txn_count": 0.0, "txn_amount_sum": 0.0, "txn_amount_max": 0.0, "txn_amount_mean": 0.0})
+        d = {"source": int(k[0]), "target": int(k[1]), **{kk: float(vv) for kk, vv in st.items()}}
         d["is_false"] = int(k in false_fin)
-        st = txn_stats.get(k, None)
-        if st:
-            d.update(st)
-        else:
-            d.update({"txn_count": 0.0, "txn_amount_sum": 0.0, "txn_amount_mean": 0.0, "txn_amount_max": 0.0})
+        d["copied_from"] = copy_provenance.get("finance", {}).get(k)
         fin_edges_out.append(d)
 
-    # communication
-    comm_edges_out = []
+    # communication (undirected)
+    comm_edges_out: List[Dict[str, Any]] = []
     for e in communication_edges:
-        a, b = (int(e.source), int(e.target)) if int(e.source) < int(e.target) else (int(e.target), int(e.source))
-        k = (a, b)
-        d = {"source": a, "target": b}
+        k = _k(e.source, e.target, directed=False)
+        st = comm_stats.get(k, {"comm_count": 0.0, "comm_duration_sum": 0.0, "comm_duration_mean": 0.0})
+        d = {"source": int(k[0]), "target": int(k[1]), **{kk: float(vv) for kk, vv in st.items()}}
         d["is_false"] = int(k in false_comm)
-        st = comm_stats.get(k, None)
-        if st:
-            d.update(st)
-        else:
-            d.update({"comm_count": 0.0, "comm_duration_sum": 0.0, "comm_duration_mean": 0.0})
+        d["copied_from"] = copy_provenance.get("communication", {}).get(k)
         comm_edges_out.append(d)
 
-    # operation
-    op_edges_out = []
+    # operation (undirected)
+    op_edges_out: List[Dict[str, Any]] = []
     for e in operation_edges:
-        a, b = (int(e.source), int(e.target)) if int(e.source) < int(e.target) else (int(e.target), int(e.source))
-        k = (a, b)
-        d = {"source": a, "target": b}
+        k = _k(e.source, e.target, directed=False)
+        st = op_stats.get(k, {"op_count": 0.0})
+        a, b = int(k[0]), int(k[1])
+        same_cell = int(id_to_node.get(a).op_cell_id == id_to_node.get(b).op_cell_id) if (a in id_to_node and b in id_to_node) else 0
+        d = {"source": a, "target": b, **{kk: float(vv) for kk, vv in st.items()}, "same_cell": int(same_cell)}
         d["is_false"] = int(k in false_op)
-        st = op_stats.get(k, None)
-        if st:
-            d.update(st)
-        else:
-            d.update({"op_count": 0.0})
+        d["copied_from"] = copy_provenance.get("operation", {}).get(k)
         op_edges_out.append(d)
 
-    # ideology
-    ideo_edges_out = []
+    # ideology (undirected)
+    ideo_edges_out: List[Dict[str, Any]] = []
     for e in ideology_edges:
-        a, b = (int(e.source), int(e.target)) if int(e.source) < int(e.target) else (int(e.target), int(e.source))
-        u_ideo = float(id_to_node[a].ideology)
-        v_ideo = float(id_to_node[b].ideology)
+        k = _k(e.source, e.target, directed=False)
+        a, b = int(k[0]), int(k[1])
+        u_ideo = float(id_to_node[a].ideology) if a in id_to_node else 0.5
+        v_ideo = float(id_to_node[b].ideology) if b in id_to_node else 0.5
         sim = 1.0 - abs(u_ideo - v_ideo)
-        k = (a, b)
         d = {"source": a, "target": b, "similarity": float(sim)}
         d["is_false"] = int(k in false_ideo)
+        d["copied_from"] = copy_provenance.get("ideology", {}).get(k)
         ideo_edges_out.append(d)
+
+    # summary of copy provenance (for quick diagnostics)
+    copy_summary: Dict[str, Dict[str, int]] = {}
+    for lname, mp in (copy_provenance or {}).items():
+        cnt: Dict[str, int] = {}
+        for src in mp.values():
+            cnt[str(src)] = int(cnt.get(str(src), 0) + 1)
+        if cnt:
+            copy_summary[str(lname)] = cnt
 
     manifest = {
         "meta": {
@@ -1095,6 +1456,7 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
             "seed": int(cfg.seed),
             "generator": "multiplex_generator_v3",
             "config": asdict(cfg),
+            "copy_summary": copy_summary,
         },
         "nodes": [asdict(n) for n in nodes],
         "layers": {
@@ -1108,6 +1470,7 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
     }
 
     return manifest
+
 
 
 def main() -> None:
