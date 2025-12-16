@@ -22,19 +22,21 @@
 > See **[Ethical Considerations](#-ethical-considerations)** for allowed and prohibited uses.
 
 
+---
+
 ## 🔍 TL;DR
 
-A **purpose-built research sandbox** for disruption and risk analysis on **purely synthetic** multiplex terrorist networks — designed to be **configurable and reproducible**.
+A **purpose-built research sandbox** for disruption and risk analysis on **purely synthetic multiplex terrorist networks** — designed to be configurable, leakage-aware, and reproducible.
 
-- **Generate** 5-layer multiplex graphs *(hierarchy, finance, communication, operation, ideology)* with controllable structure, noise, and difficulty knobs.
-- **Train** a **multi-task R-GCN** for:
-  - **HVT detection** (high-value target classification)
+- **Generate** multi-layer multiplex graphs (e.g., hierarchy, finance, communication, operation, ideology) with explicit knobs for **structure strength**, **randomness**, **missingness/observability**, **false edges**, and **cross-layer copied edges** (provenance-aware noise).
+- **Train** a **multi-task GNN (R-GCN / Transformer-style encoder options)** for
+  - **HVT detection** *(high-value target classification)*
   - **Role inference** *(courier, financier, leader, operative, support)*
-  - **Node-level importance regression** (continuous criticality score)
-- **Benchmark** **layer-aware link prediction** on **finance** & **communication** edges using:
+  - **Node-level importance regression** *(continuous criticality score)*
+- **Benchmark** **layer-aware link prediction** on **finance** & **communication** edges with:
   - `uniform` negatives
   - `hard_region` hard-negative sampling (negatives constrained by region)
-- **Reproduce** end-to-end results via CLI (generator → PyG dataset → train → summarize).
+- **Reproduce** end-to-end results via CLI (**generator → PyG dataset → diagnostics → train → summarize**) with seeds + configs tracked for clean comparisons.
 
 ---
 
@@ -42,46 +44,73 @@ A **purpose-built research sandbox** for disruption and risk analysis on **purel
 
 Operational terrorist/extremist networks are difficult to study rigorously because they are often:
 
-- **Multiplex**: interactions span hierarchy, financing, communication, operations, and ideology
-- **Noisy & incomplete**: partial observability, missing nodes/edges, sampling bias
-- **Risk-sensitive**: analysts care about **actionability** (who to disrupt), not only generic centrality
+- **Multiplex**: interactions span hierarchy, financing, communication, operations, and ideology (with meaningful cross-layer dependencies).
+- **Noisy & incomplete**: partial observability, layer-dependent missingness, spurious links (**false edges**), and systematic sampling/visibility bias.
+- **Risk-sensitive**: analysts care about **actionability** (who to prioritize/disrupt), not only generic centrality—while models must avoid evaluation artifacts (e.g., edge/label leakage).
 
 This repository provides a **safe, reproducible sandbox** that captures these realities **without any real-world data**:
 
-1. **Config-driven multiplex generator** (explicit difficulty controls).
-2. **Multi-task GNN baselines** (HVT, role, importance).
-3. **Layer-wise link prediction benchmarks** to quantify per-layer signal under increasing noise/difficulty.
+1. **Config-driven multiplex generator (v3)** with explicit knobs for structure strength, randomness, missingness/observability, false-edge injection, and **cross-layer copied edges** (provenance-aware noise).
+2. **Multi-task GNN baselines (v3)** for node-level objectives: **HVT**, **role**, and **importance** (continuous criticality).
+3. **Layer-wise link prediction benchmarks (v3)** (e.g., finance/communication) with **uniform vs. hard-region negatives** and a **leakage-safe message-passing protocol** to quantify per-layer signal as difficulty/noise increases.
+
 
 ---
 
 ## ✨ Highlights
 
-### 1) Multiplex Generator (v2)
-- 5 layers: `hierarchy`, `finance`, `communication`, `operation`, `ideology`
-- Node attributes: `region`, `group`, `role`, plus continuous feature vectors
-- Difficulty knobs: `finance_structure_strength`, `comm_structure_strength`, `comm_randomness`, `hvt_ratio`, etc.
-- Presets:
+### 1) Multiplex Generator (v3)
+- **5+ layers (relation types)**: `hierarchy`, `finance`, `communication`, `operation`, `ideology` *(extensible)*
+- **Node attributes**: `region`, `group`, `role`, plus continuous feature vectors
+- **Config-driven difficulty knobs** (examples):
+  - Layer structure strength / homophily (community tightness)
+  - Layer randomness (esp. communication)
+  - **Missingness / observability** (layer-dependent edge drops + visibility bias)
+  - **False edges** injection (spurious links)
+  - **Cross-layer copied edges** (provenance-aware noise / leakage-like effects)
+  - `hvt_ratio`, role priors, burstiness / activity gating (if enabled in config)
+- **Presets**:
   - `configs/generator_easy.json`
   - `configs/generator_baseline.json`
   - `configs/generator_hard.json`
 
-### 2) PyG Dataset Builder
-Produces a single `torch_geometric.data.Data` object containing:
-- Graph: `x`, `edge_index`, `edge_type`, `edge_attr`
-- Labels: `y_role`, `y_hvt`
-- Splits: `train_mask`, `val_mask`, `test_mask`
-- Metadata: `role_mapping`, `region_mapping`, (and optional importance normalization stats)
+> Output is a single manifest: `multiplex.json` (single source of truth for build/diagnostics/training).
 
-### 3) Model Zoo
-- `MultiTaskRGCN`: shared R-GCN encoder + task heads (**role**, **HVT**, **importance**)
-- `HvtRGCN`: single-task HVT baseline
-- Link prediction: R-GCN encoder + decoder with negative sampling modes:
-  - `uniform`
-  - `hard_region`
+### 2) PyG Dataset Builder (v3)
+Produces a single `torch_geometric.data.Data` object containing:
+- **Graph**
+  - `x`, `edge_index`, `edge_type`
+  - `edge_attr` *(optional, if built/used)*
+  - Optional provenance flags (if present in manifest): `edge_is_false`, `edge_is_copied`
+- **Labels**
+  - `y_role` (multi-class)
+  - `y_hvt` (binary)
+  - `y_imp` (continuous importance / criticality)
+- **Splits**
+  - `train_mask`, `val_mask`, `test_mask`
+- **Metadata**
+  - `role_mapping`, `region_mapping`, `group_mapping` (where applicable)
+  - Optional normalization stats for importance/regression targets
+
+### 3) Model Zoo (v3)
+- **Multi-task node model**: shared encoder + task heads (**role**, **HVT**, **importance**)
+  - Implemented in `train_multitask_gnn_v3.py` (R-GCN / Transformer-style encoder options depending on flags)
+- **Single-task HVT baseline**: `train_hvt_gnn_v3.py`
+- **Layer-wise link prediction**: `train_linkpred_layer_v3.py`
+  - Negative sampling modes:
+    - `uniform`
+    - `hard_region` (region-constrained hard negatives)
+  - **Leakage-safe message passing**: held-out positives for the target layer are removed from the encoder graph
+  - Optional edge-signal usage:
+    - `--edge_attr_agg` (aggregate edge attributes into node signals)
+    - `--include_edge_flags` (aggregate provenance flags like `edge_is_false/edge_is_copied`)
 
 ### 4) Experiment / Reporting Suite
-- Shell-friendly scripts for end-to-end runs: **generate → build → train → evaluate**
-- Aggregation + plots from run folders (see `src/analysis/plot_multitask_linkpred_summary.py`)
+- Shell-friendly scripts for end-to-end runs: **generate → build → diagnostics → train → evaluate**
+- Diagnostics for knob validation: `basic_diagnostics_v3.py`
+- Aggregation + plots across run folders:
+  - `plot_multitask_linkpred_summary.py` (merges multi-task + link-pred outputs into a compact summary)
+
 
 ---
 
@@ -102,15 +131,14 @@ multiplex-terror-network-gnn/
 │
 ├── src/
 │   ├── __init__.py
-│   ├── data/
-│   │   ├── multiplex_generator_v1.py
-│   │   ├── multiplex_generator_v2.py
-│   │   ├── build_pyg_dataset.py
-│   │   └── basic_diagnostics.py
+│   ├── data/  
+│   │   ├── multiplex_generator_v3.py
+│   │   ├── build_pyg_dataset_v3.py
+│   │   └── basic_diagnostics_v3.py
 │   ├── models/
-│   │   ├── train_multitask_gnn.py
-│   │   ├── train_hvt_gnn.py
-│   │   └── train_linkpred_layer.py
+│   │   ├── train_multitask_gnn_v3.py
+│   │   ├── train_hvt_gnn_v3.py
+│   │   └── train_linkpred_layer_v3.py
 │   └── analysis/
 │       └── plot_multitask_linkpred_summary.py
 │
@@ -161,7 +189,7 @@ End-to-end in **four** steps (works for `easy`, `baseline`, or `hard`).
 
 ### 1) Generate a multiplex graph
 ```bash
-python src/data/multiplex_generator_v2.py \
+python src/data/multiplex_generator_v3.py \
   --size 1500 \
   --seed 2025 \
   --out_dir data/multiplex_baseline \
@@ -172,14 +200,14 @@ This will create `data/multiplex_baseline/multiplex.json`.
 
 ### 2) Convert to a PyG dataset
 ```bash
-python src/data/build_pyg_dataset.py \
+python src/data/build_pyg_dataset_v3.py \
   --manifest data/multiplex_baseline/multiplex.json \
   --out_path data/multiplex_baseline/pyg_data.pt
 ```
 
 ### 3) Run diagnostics (optional but recommended)
 ```bash
-python src/data/basic_diagnostics.py \
+python src/data/basic_diagnostics_v3.py \
   --manifest data/multiplex_baseline/multiplex.json \
   --out_dir data/analysis/multiplex_baseline
 ```
@@ -187,14 +215,14 @@ python src/data/basic_diagnostics.py \
 ### 4) Train models
 Multi-task HVT + role + importance:
 ```bash
-python src/models/train_multitask_gnn.py \
+python src/models/train_multitask_gnn_v3.py \
   --data_path data/multiplex_baseline/pyg_data.pt \
   --hidden_dim 64 --num_layers 3 --lr 1e-3 --epochs 500
 ```
 
 Layer-wise link prediction (finance or communication):
 ```bash
-python src/models/train_linkpred_layer.py \
+python src/models/train_linkpred_layer_v3.py \
   --data_path data/multiplex_baseline/pyg_data.pt \
   --layer finance \
   --hidden_dim 64 --num_layers 3 --lr 1e-3 \
@@ -210,24 +238,24 @@ Repeat with `configs/generator_easy.json` or `configs/generator_hard.json` to sw
 This repo supports an optional notebook workflow for rapid prototyping, visualization, and debugging.
 A Jupyter notebook is provided (e.g., ./notebooks/multiplex-terror-network-gnn.ipynb) that:
 - Generates configurable synthetic multiplex network data
-- GNN-based model## 📊 Example Results
+- GNN-based model
 
-Below are representative results from the latest **Multi-task GNN (v2)** runs on the synthetic multiplex benchmarks (**N=1500**, seed=1024, HVT ratio=0.05). These metrics are aggregated in `multitask_linkpred_summary.csv`.
+
+## 📊 Example Results
+
+Below are representative results from the latest **Multi-task GNN (v3)** runs on the synthetic multiplex benchmarks (**N=1500**, seed=1024, HVT ratio=0.05). These metrics are aggregated in `multitask_linkpred_summary.csv`.
 
 ## 📊 Example Results (Synthetic Multiplex, n=1500)
-Note: the uploaded multitask_linkpred_summary.csv currently indicates hvt_ratio=0.05. If your latest run is truly hvt_ratio=0.07, please re-export the summary and replace the numbers below.
 
-### Multi-task node prediction (Node-level)
-| Difficulty | Role macro-F1 | HVT AUC | HVT F1 | Importance R² | 
+### Multi-task node prediction Version 3(Node-level)
+| Difficulty | HVT F1 | HVT AUC | Role F1 | Importance R² | 
 | --- | --- | --- | --- | --- |
-| easy | 0.566 | 0.929 | 0.667 | 0.347 |
-| baseline | 0.557 | 0.930 | 0.669 | 0.501 |
-| hard | 0.533 | 0.962 | 0.741 | 0.577 |
+| baseline | 0.619 | 0.976 | 0.580 | 0.501 |
+| hard | 0.611 | 0.958 | 0.546 | 0.577 |
 
-### Link Prediction (Edge-level)
+### Link Prediction Version 3(Edge-level)
 | Difficulty | Finance LP AUC/AP | Comm LP AUC/AP |
 | --- | --- | --- |
-| easy | 0.988 / 0.979 (uniform) | 0.898 / 0.882 (hard-region) |
 | baseline | 0.988 / 0.979 (hard-region) | 0.897 / 0.880 (hard-region) |
 | hard | 0.980 / 0.973 (hard-region) | 0.915 / 0.920 (hard-region) |
 
@@ -272,18 +300,6 @@ This works because the scripts write `*_metrics.json` and plot folders to `os.pa
 ## 📈 Results Summary
 
 The latest benchmark results (multi-task node prediction + link prediction) are shown in **Example Results** above and are aggregated in `multitask_linkpred_summary.csv`.
-
-### Difficulty knobs
-
-- `finance_structure_strength`: stronger → more structured/clustered finance edges
-- `comm_structure_strength`: stronger → more structured communication edges
-- `comm_randomness`: stronger → noisier / less structured communication edges
-- (optional) any additional knobs you introduce in `multiplex_generator_v2.py`
-
-Workflow:
-1) Copy an existing config (e.g., `generator_baseline.json`)
-2) Modify knobs
-3) Pass it via `--config` to `multiplex_generator_v2.py`
 
 ---
 
