@@ -19,5 +19,48 @@
   "ideo_threshold": 0.2,
   "op_num_cells": 20,
   "op_cell_size": 4,
-  "hvt_ratio": 0.07
+  "hvt_ratio": 0.07,
+  "num_days": 300,
+  "activity_onoff": true,
+  "activity_p_off_to_on": 0.02,
+  "activity_p_on_to_off": 0.03,
+  "observation_bias": true,
+  "obs_missing_bias_strength": 0.5,
+  "obs_false_edge_bias_gamma": 0.5,
+  "missing_edge_rate_hierarchy": 0.01,
+  "false_edge_rate_hierarchy": 0.005,
+  "missing_edge_rate_finance": 0.01,
+  "false_edge_rate_finance": 0.005,
+  "missing_edge_rate_communication": 0.02,
+  "false_edge_rate_communication": 0.01,
+  "missing_edge_rate_operation": 0.015,
+  "false_edge_rate_operation": 0.008,
+  "missing_edge_rate_ideology": 0.01,
+  "false_edge_rate_ideology": 0.005,
+  "missing_event_rate_txn": 0.02,
+  "missing_event_rate_comm": 0.02,
+  "missing_event_rate_op": 0.02,
+  "cross_layer_copy": [
+    {
+      "src": "hierarchy",
+      "dst": "communication",
+      "rate": 0.04
+    },
+    {
+      "src": "operation",
+      "dst": "communication",
+      "rate": 0.05
+    },
+    {
+      "src": "finance",
+      "dst": "communication",
+      "rate": 0.03
+    },
+    {
+      "src": "communication",
+      "dst": "finance",
+      "rate": 0.02,
+      "direction_mode": "random"
+    }
+  ]
 }
