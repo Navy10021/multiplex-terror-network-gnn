@@ -204,6 +204,8 @@ This creates a UTC-timestamped run directory (pattern: `run_<date>_<config-hash>
 - `run_metadata.json` (config hash, git commit, CLI command)
 - `DATASET_CARD.md` (layer-wise edge noise/copied rates + artifact paths)
 
+Manifest validation enforces that node IDs are contiguous (`0..N-1`), `meta.num_nodes` matches the node list, and every edge/event endpoint exists—catching malformed inputs early before building datasets or training models.
+
 ---
 
 End-to-end in **four** steps (works for `easy`, `baseline`, or `hard`).
