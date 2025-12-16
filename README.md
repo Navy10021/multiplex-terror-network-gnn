@@ -243,27 +243,30 @@ A Jupyter notebook is provided (e.g., ./notebooks/multiplex-terror-network-gnn.i
 
 ## 📊 Example Results
 
-Below are representative results from the latest **Multi-task GNN (v3)** runs on the synthetic multiplex benchmarks (**N=1500**, seed=1024, HVT ratio=0.05). These metrics are aggregated in `multitask_linkpred_summary.csv`.
+Below are representative results from the **current v3 summary export** (`multitask_linkpred_summary.csv`) on the synthetic multiplex benchmarks (**n=1500**, seed=2025, HVT ratio=0.07).
 
-## 📊 Example Results (Synthetic Multiplex, n=1500)
+### Multi-task node prediction (v3, Node-level)
 
-### Multi-task node prediction Version 3(Node-level)
-| Difficulty | HVT F1 | HVT AUC | Role F1 | Importance R² | 
-| --- | --- | --- | --- | --- |
-| baseline | 0.619 | 0.976 | 0.580 | 0.501 |
-| hard | 0.611 | 0.958 | 0.546 | 0.577 |
+| Difficulty | HVT F1 | HVT AUC | Role F1 (macro) | Importance R² |
+| --- | ---: | ---: | ---: | ---: |
+| baseline | 0.619 | 0.977 | 0.468 | 0.732 |
+| hard | 0.611 | 0.959 | 0.547 | 0.704 |
 
-### Link Prediction Version 3(Edge-level)
+### Link Prediction (v3, Edge-level)
+
+> Note: In the current `multitask_linkpred_summary.csv` export, link prediction columns are empty (NaN), which usually means the corresponding `linkpred_*_v3.json` artifacts were not found/merged.  
+> Run `train_linkpred_layer_v3.py` for each layer and re-run `plot_multitask_linkpred_summary.py` to populate this table.
+
 | Difficulty | Finance LP AUC/AP | Comm LP AUC/AP |
 | --- | --- | --- |
-| baseline | 0.988 / 0.979 (hard-region) | 0.897 / 0.880 (hard-region) |
-| hard | 0.980 / 0.973 (hard-region) | 0.915 / 0.920 (hard-region) |
+| baseline | — | — |
+| hard | — | — |
 
-For link prediction, we evaluate two negative-sampling protocols and report the better AUC/AP for each difficulty setting:
-- uniform: negatives sampled uniformly at random
-- hard-region: negatives sampled from the same region (harder discrimination)
+For link prediction, we evaluate two negative-sampling protocols and (optionally) report the better AUC/AP per difficulty setting:
+- `uniform`: negatives sampled uniformly at random
+- `hard_region`: negatives sampled from the same region (harder discrimination)
 
-Quick read: In this summary, **hard** is best on HVT and importance (AUC/R²), and **Comm link prediction** improves with difficulty. **Finance link prediction** is consistently strong across settings (AUC ≈ 0.98–0.99).
+Quick read (from the node tasks above): **baseline** is slightly better on **HVT AUC** and **importance R²**, while **hard** improves **role macro-F1**.
 
 
 ## 🗂️ Outputs
@@ -294,27 +297,6 @@ If you prefer a `results/<difficulty>/<run_name>/...` layout, the simplest optio
 - train using `--data_path` pointing at that run directory
 
 This works because the scripts write `*_metrics.json` and plot folders to `os.path.dirname(data_path)`.
-
----
-
-## 📈 Results Summary
-
-The latest benchmark results (multi-task node prediction + link prediction) are shown in **Example Results** above and are aggregated in `multitask_linkpred_summary.csv`.
-
----
-
-## 🧪 Smoke Tests & CI
-
-Run a minimal end-to-end pipeline (generator → PyG dataset) to catch regressions quickly:
-
-```bash
-pytest tests/test_smoke_pipeline.py::test_generate_and_build_pyg_roundtrip
-```
-
-This uses a small graph (120 nodes) and exercises:
-- v2 generator defaults
-- PyG conversion
-- masks and tensor outputs
 
 ---
 
