@@ -177,3 +177,59 @@ def validate_manifest_file(path: str) -> Manifest:
     with open(path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
     return validate_manifest_dict(manifest)
+
+
+def summarize_manifest(manifest: Manifest) -> Dict[str, int]:
+    """Return basic counts for a validated manifest.
+
+    Counts include nodes, total edges across layers, number of layers,
+    and events. This is useful for quick smoke checks and reporting.
+    """
+
+    edge_total = sum(len(layer.edges) for layer in manifest.layers.values())
+
+    return {
+        "nodes": len(manifest.nodes),
+        "edges": edge_total,
+        "layers": len(manifest.layers),
+        "events": len(manifest.events or []),
+    }
+
+
+def _cli() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Validate a manifest JSON file and optionally summarize it.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("path", help="Path to manifest JSON file")
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Print node/edge/layer/event counts after validation",
+    )
+
+    args = parser.parse_args()
+
+    try:
+        manifest = validate_manifest_file(args.path)
+    except ManifestValidationError as exc:  # pragma: no cover - exercised in CLI usage
+        parser.error(str(exc))
+        return 1
+
+    print(f"Validation succeeded for {args.path}")
+
+    if args.summary:
+        summary = summarize_manifest(manifest)
+        print(
+            "Summary: nodes={nodes}, edges={edges}, layers={layers}, events={events}".format(
+                **summary
+            )
+        )
+
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - entrypoint wrapper
+    raise SystemExit(_cli())

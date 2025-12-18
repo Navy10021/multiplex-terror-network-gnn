@@ -206,6 +206,14 @@ This creates a UTC-timestamped run directory (pattern: `run_<date>_<config-hash>
 
 Manifest validation enforces that node IDs are contiguous (`0..N-1`), `meta.num_nodes` matches the node list, and every edge/event endpoint exists—catching malformed inputs early before building datasets or training models.
 
+To validate an existing manifest on its own (e.g., after editing or before sharing), run:
+
+```bash
+python -m src.validation.schema data/multiplex_baseline/multiplex.json --summary
+```
+
+This exits non-zero on any schema error and prints node/edge/layer/event counts when `--summary` is provided.
+
 ---
 
 End-to-end in **four** steps (works for `easy`, `baseline`, or `hard`).
