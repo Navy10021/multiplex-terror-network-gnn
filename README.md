@@ -280,8 +280,8 @@ Below are representative results from the **current v3 summary export** (`multit
 
 | Difficulty | HVT F1 | HVT AUC | Role F1 (macro) | Importance R² |
 | --- | ---: | ---: | ---: | ---: |
-| baseline | 0.619 | 0.977 | 0.468 | 0.732 |
-| hard | 0.611 | 0.959 | 0.547 | 0.704 |
+| baseline | 0.619 | 0.977 | 0.568 | 0.732 |
+| hard | 0.611 | 0.959 | 0.647 | 0.704 |
 
 ### Link Prediction (v3, Edge-level)
 
