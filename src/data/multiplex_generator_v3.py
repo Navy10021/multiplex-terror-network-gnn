@@ -1617,6 +1617,20 @@ def main() -> None:
     ontology_report["generation_telemetry"] = ontology_telemetry
     manifest_model = validate_manifest_dict(manifest)
 
+    ontology_report = {"conforms": True, "constraints_checked": 0, "errors": []}
+    try:
+        ontology_report = validate_manifest_dict_with_ontology(
+            manifest_dict=manifest,
+            ontology_path=args.ontology,
+            shapes_path=args.shapes,
+        )
+        print("[*] Ontology validation passed")
+    except OntologyValidationError as exc:
+        ontology_report = {"conforms": False, "constraints_checked": 4, "errors": [str(exc)]}
+        if not args.no_ontology_strict:
+            raise
+        print(f"[!] Ontology validation warning (strict disabled): {exc}")
+
     out_path = os.path.join(out_dir, "multiplex.json")
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
