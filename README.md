@@ -96,6 +96,7 @@ Produces a single `torch_geometric.data.Data` object containing:
 ### 3) Model Zoo (v3)
 - **Multi-task node model**: shared encoder + task heads (**role**, **HVT**, **importance**)
   - Implemented in `train_multitask_gnn_v3.py` (R-GCN / Transformer-style encoder options depending on flags)
+  - Phase D: optional ontology-aware regularization (`--ontology_loss`) with weights for role-compatibility/transitivity/temporal constraints
 - **Single-task HVT baseline**: `train_hvt_gnn_v3.py`
 - **Layer-wise link prediction**: `train_linkpred_layer_v3.py`
   - Negative sampling modes:

@@ -11,7 +11,7 @@
 - [x] **Phase A 시작/반영**: validator 심화(규칙 단위 위반, severity, affected IDs, histogram, 시간/관계-역할/provenance 점검)
 - [x] **Phase B 시작/반영**: ontology 제약기반 재시도 생성 + telemetry를 generator/run 파이프라인에 연동
 - [x] **Phase C 시작/반영**: PyG builder ontology 브릿지 텐서/마스크 + payload 일관성 점검 추가
-- [ ] Phase D
+- [x] **Phase D started**: multitask trainer ontology-aware regularizers + ablation flags + metrics wiring
 - [ ] Phase E
 
 ---
