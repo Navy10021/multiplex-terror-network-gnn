@@ -678,7 +678,7 @@ def build_argparser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_argparser().parse_args()
 
-    # enforce flag dependency inside main (fixes NameError from prior broken indentation)
+    # enforce flag dependency inside main
     if args.include_edge_flags and not args.edge_attr_agg:
         print("[!] --include_edge_flags implies --edge_attr_agg. Enabling --edge_attr_agg.")
         args.edge_attr_agg = True

@@ -154,6 +154,14 @@ python -m src.cli.validate_ontology \
   --json
 ```
 
+### Unified CLI (editable install)
+```bash
+pip install -e .
+multiplex-gnn --help
+multiplex-gnn run-all --help
+multiplex-gnn validate-ontology --help
+```
+
 ---
 
 ## 📦 Typical outputs
@@ -215,10 +223,18 @@ multiplex-terror-network-gnn/
 │   ├── generator_easy.json
 │   ├── generator_baseline.json
 │   └── generator_hard.json
+├── scripts/
+│   ├── run_easy_baseline_hard.sh
+│   └── summarize_all.sh
+├── docs/
+│   ├── INSTALL.md
+│   ├── ONTOLOGY_CONTRACT.md
+│   └── REPRO.md
 ├── src/
 │   ├── run_all.py
-│   ├── cli/validate_ontology.py
-│   ├── ontology/{load.py,validator.py}
+│   ├── cli/{main.py,validate_ontology.py}
+│   ├── ontology/{load.py,validator.py,report_schema.py}
+│   ├── reporting/cards.py
 │   ├── data/{multiplex_generator_v3.py,build_pyg_dataset_v3.py,basic_diagnostics_v3.py}
 │   ├── models/{train_multitask_gnn_v3.py,train_linkpred_layer_v3.py,...}
 │   ├── analysis/plot_multitask_linkpred_summary.py
