@@ -3,15 +3,16 @@ import sys
 from pathlib import Path
 
 import pytest
-import torch
+
+torch = pytest.importorskip("torch")
 
 # Ensure repository root is on the path for src imports
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.data.multiplex_generator_v2 import GeneratorConfig, generate_multiplex_with_config
 from src.data.build_pyg_dataset import build_pyg_data
+from src.data.multiplex_generator_v2 import GeneratorConfig, generate_multiplex_with_config
 
 
 def _write_manifest(tmp_path: Path, cfg: GeneratorConfig) -> Path:
