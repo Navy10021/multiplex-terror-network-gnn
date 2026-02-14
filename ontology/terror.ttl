@@ -1,0 +1,82 @@
+@prefix : <http://example.org/terror#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+:TerrorOntology a owl:Ontology ;
+    rdfs:label "Multiplex Terror Network Ontology" .
+
+:Actor a owl:Class .
+:Role a owl:Class .
+:Relation a owl:Class .
+:Event a owl:Class .
+:HierarchyRelation a owl:Class ; rdfs:subClassOf :Relation .
+:FinanceRelation a owl:Class ; rdfs:subClassOf :Relation .
+:CommunicationRelation a owl:Class ; rdfs:subClassOf :Relation .
+
+:source a owl:DatatypeProperty ; rdfs:domain :Relation ; rdfs:range xsd:int .
+:target a owl:DatatypeProperty ; rdfs:domain :Relation ; rdfs:range xsd:int .
+
+:Evidence a owl:Class .
+:Observation a owl:Class ;
+    rdfs:subClassOf :Evidence .
+:EdgeProvenance a owl:Class ;
+    rdfs:subClassOf :Evidence .
+
+:Layer a owl:Class .
+:InteractionRule a owl:Class .
+
+:Leader a owl:Class ; rdfs:subClassOf :Role .
+:Financier a owl:Class ; rdfs:subClassOf :Role .
+:Courier a owl:Class ; rdfs:subClassOf :Role .
+:Operative a owl:Class ; rdfs:subClassOf :Role .
+:Support a owl:Class ; rdfs:subClassOf :Role .
+
+:hasRole a owl:ObjectProperty ;
+    rdfs:domain :Actor ;
+    rdfs:range :Role .
+
+:hierarchyEdge a owl:ObjectProperty ;
+    rdfs:domain :Actor ;
+    rdfs:range :Actor .
+
+:financeEdge a owl:ObjectProperty ;
+    rdfs:domain :Actor ;
+    rdfs:range :Actor .
+
+:communicationEdge a owl:ObjectProperty ;
+    rdfs:domain :Actor ;
+    rdfs:range :Actor .
+
+:operationEdge a owl:ObjectProperty ;
+    rdfs:domain :Actor ;
+    rdfs:range :Actor .
+
+:ideologyEdge a owl:ObjectProperty ;
+    rdfs:domain :Actor ;
+    rdfs:range :Actor .
+
+:txnAmountSum a owl:DatatypeProperty ;
+    rdfs:domain :Relation ;
+    rdfs:range xsd:float .
+
+:timestamp a owl:DatatypeProperty ;
+    rdfs:domain :Event ;
+    rdfs:range xsd:int .
+
+:isFalseEdge a owl:DatatypeProperty ;
+    rdfs:domain :EdgeProvenance ;
+    rdfs:range xsd:boolean .
+
+:isCopiedEdge a owl:DatatypeProperty ;
+    rdfs:domain :EdgeProvenance ;
+    rdfs:range xsd:boolean .
+
+:sourceLayer a owl:DatatypeProperty ;
+    rdfs:domain :EdgeProvenance ;
+    rdfs:range xsd:string .
+
+:confidence a owl:DatatypeProperty ;
+    rdfs:domain :Evidence ;
+    rdfs:range xsd:float .
