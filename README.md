@@ -82,6 +82,7 @@ Produces a single `torch_geometric.data.Data` object containing:
   - `x`, `edge_index`, `edge_type`
   - `edge_attr` *(optional, if built/used)*
   - Optional provenance flags (if present in manifest): `edge_is_false`, `edge_is_copied`
+  - Ontology bridge tensors: `edge_ontology_attr`, `node_ontology_features`, `role_compatibility_mask`
 - **Labels**
   - `y_role` (multi-class)
   - `y_hvt` (binary)

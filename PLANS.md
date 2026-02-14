@@ -10,7 +10,7 @@ This document is a forward engineering plan focused on upgrading this repository
 
 - [x] **Phase A started**: validator depth expansion implemented (rule-level violations, severity, affected IDs, histogram, temporal/relation-role/provenance checks).
 - [x] **Phase B started**: ontology-constrained generation retries + telemetry wired in generator/run pipeline
-- [ ] Phase C
+- [x] **Phase C started**: PyG builder ontology bridge tensors/masks + payload consistency checks
 - [ ] Phase D
 - [ ] Phase E
 
