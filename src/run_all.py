@@ -239,7 +239,7 @@ def main() -> None:
         if ontology_report.get("conforms", False):
             print("[*] Ontology validation passed")
         elif not args.no_ontology_strict:
-            raise OntologyValidationError("ontology validation failed: " + "; ".join(ontology_report.get("errors", [])))
+            raise OntologyValidationError("ontology validation failed: " + "; ".join(ontology_report.get("errors", [])) + " | hint: use --no_ontology_strict to continue with reports only, or --ontology_constrained to retry generation")
         else:
             print("[!] Ontology validation warning (strict disabled)")
 

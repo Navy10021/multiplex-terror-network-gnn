@@ -198,3 +198,45 @@ Upgrade from “ontology-checked manifests” to “ontology-guided generation/t
 5. Phase E (reporting + explanation)
 
 This order minimizes regression risk and enables measurable gains at each step.
+
+
+## 6) Next evolution proposals (post-Phase E)
+
+### F1 — Ontology-conformance friendly defaults & UX hardening
+
+**Why now**
+- Recent smoke checks show baseline config can fail strict ontology mode in `run_all` unless retries/non-strict mode are enabled.
+
+**Actions**
+- Improve strict-mode error guidance and docs for first-run success path.
+- Add runbook presets: strict research mode vs non-strict exploratory mode.
+- Add conformance summary snippet to terminal output (top failing checks + counts).
+
+**DoD**
+- First-time users can complete one end-to-end run without confusion.
+- Strict failures produce actionable hints and remediation commands.
+
+**Validation**
+- `python -m src.run_all ...` strict + non-strict smoke tests.
+
+### F2 — Explanation quality upgrade (model attribution + ontology chain)
+
+**Actions**
+- Replace degree-based proxy evidence with model-derived attribution (neighbors/edges contributions).
+- Link violations and satisfied rules into per-target rule chains.
+- Add `confidence_alignment` between model probability and rule score.
+
+**DoD**
+- Explanation JSON contains both model attribution and ontology rule chains.
+- README includes one realistic explanation example.
+
+### F3 — Reporting/benchmark standardization
+
+**Actions**
+- Add ontology-aware benchmark table templates (base vs +ontology_loss, strict vs non-strict generation).
+- Export aggregated ontology metrics (`conformance`, `violations_per_1k_*`) across seeds/difficulties.
+- Add lightweight CI smoke job for `run_all` with Phase E flags.
+
+**DoD**
+- Reproducible summary table available from one command.
+- CI catches regressions in ontology-reporting artifact generation.

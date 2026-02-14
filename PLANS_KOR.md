@@ -11,8 +11,8 @@
 - [x] **Phase A 시작/반영**: validator 심화(규칙 단위 위반, severity, affected IDs, histogram, 시간/관계-역할/provenance 점검)
 - [x] **Phase B 시작/반영**: ontology 제약기반 재시도 생성 + telemetry를 generator/run 파이프라인에 연동
 - [x] **Phase C 시작/반영**: PyG builder ontology 브릿지 텐서/마스크 + payload 일관성 점검 추가
-- [x] **Phase D started**: multitask trainer ontology-aware regularizers + ablation flags + metrics wiring
-- [x] **Phase E started**: ontology-aware reporting metrics + node explanation artifacts wired into run pipeline
+- [x] **Phase D 시작/반영**: 멀티태스크 학습에 ontology 정규화 loss + ablation 플래그 + metrics 기록 연동
+- [x] **Phase E 시작/반영**: ontology-aware 리포팅 지표 + 노드 설명 산출물(explanations) 연동
 
 ---
 
@@ -182,3 +182,42 @@
 5. Phase E (리포팅/설명)
 
 위 순서로 진행하면 리스크를 낮추고 단계별 성과를 정량 확인하기 쉽다.
+
+
+## 6) 다음 발전 제안 (Phase E 이후)
+
+### F1 — 온톨로지 정합성 모드 UX/기본값 고도화
+
+**배경**
+- 최근 스모크 점검에서 baseline 설정은 `run_all` strict 모드에서 위반으로 중단될 수 있어, 초회 사용자 경험이 불안정할 수 있음.
+
+**작업**
+- strict 실패 메시지/가이드 강화(권장 플래그/재시도 경로 안내).
+- 실행 모드 프리셋 정리: 연구용 strict vs 탐색용 non-strict.
+- 터미널에 상위 위반 체크/카운트 요약 출력.
+
+**완료 기준(DoD)**
+- 신규 사용자가 혼란 없이 end-to-end 1회 실행 가능.
+- strict 실패 시 바로 실행 가능한 대응 커맨드가 안내됨.
+
+### F2 — 설명 품질 고도화 (모델 attribution + 규칙 체인)
+
+**작업**
+- 현재 degree proxy 중심 설명을 모델 attribution 기반 근거로 확장.
+- 노드별로 “만족/위반 규칙 체인”을 구조화.
+- 모델 확률과 규칙 점수의 `confidence_alignment` 지표 추가.
+
+**완료 기준(DoD)**
+- explanation JSON에 모델 근거 + 온톨로지 규칙 체인이 함께 기록.
+- README에 실제 설명 예시 1건 이상 제공.
+
+### F3 — 리포팅/벤치마크 표준화
+
+**작업**
+- base vs +ontology_loss, strict vs non-strict 생성 비교 템플릿 추가.
+- seed/난이도별 ontology 지표(conformance, violations_per_1k_*) 집계 자동화.
+- Phase E 플래그 포함 `run_all` CI 스모크 잡 추가.
+
+**완료 기준(DoD)**
+- 단일 명령으로 재현 가능한 비교표 생성.
+- ontology 리포팅 산출물 회귀를 CI에서 조기 탐지.
