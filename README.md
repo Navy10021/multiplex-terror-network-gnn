@@ -212,6 +212,40 @@ To validate an existing manifest on its own (e.g., after editing or before shari
 python -m src.validation.schema data/multiplex_baseline/multiplex.json --summary
 ```
 
+For ontology-backed rule validation (role/relation and temporal checks), run:
+
+```bash
+python -m src.cli.validate_ontology \
+  --manifest data/multiplex_baseline/multiplex.json \
+  --ontology ontology/terror.ttl \
+  --shapes ontology/constraints.shacl.ttl
+```
+
+Optional JSON report:
+
+```bash
+python -m src.cli.validate_ontology \
+  --manifest data/multiplex_baseline/multiplex.json \
+  --json
+```
+
+`src/data/multiplex_generator_v3.py` and `src/run_all.py` also run ontology checks and write `ontology_validation_report.json` by default. Use `--no_ontology_strict` to keep running while recording violations. For retry-based constrained generation (Phase B), enable `--ontology_constrained` with `--ontology_max_retries` and `--ontology_retry_seed_stride`.
+
+## 🧭 Ontology-based Terror Network: Current Status & Next Focus
+
+### What is already reflected
+- OWL/SHACL ontology assets are included (`ontology/terror.ttl`, `ontology/constraints.shacl.ttl`).
+- Manifest-level ontology validation is available via `python -m src.cli.validate_ontology`.
+- Generator/runner flows write `ontology_validation_report.json` so conformance is tracked as an artifact.
+
+### What to evolve next (research-focused)
+- **Generation**: move from post-hoc validation to ontology-constrained sampling with repair telemetry.
+- **Builder (PyG)**: expose ontology-derived masks/tensors (role-pair constraint masks, temporal violation candidates).
+- **Model Zoo**: add ontology-aware losses (role–relation compatibility, transitivity, temporal consistency).
+- **Reporting**: add ontology compliance/violation metrics and rule-grounded explanation outputs per node.
+
+Detailed forward plans are maintained in `PLANS.md` (EN) and `PLANS_KOR.md` (KO), focused on next-stage ontology-driven code evolution.
+
 This exits non-zero on any schema error and prints node/edge/layer/event counts when `--summary` is provided.
 
 ---
