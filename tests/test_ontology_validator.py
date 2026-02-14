@@ -111,6 +111,32 @@ def test_validate_manifest_with_ontology_provenance_failure(tmp_path: Path):
     assert "out-of-range confidence" in str(exc.value)
 
 
+
+
+def test_validate_manifest_with_ontology_non_numeric_values_fail_cleanly(tmp_path: Path):
+    def _bad(m):
+        edge = m["layers"]["finance"]["edges"][0]
+        edge["txn_amount_sum"] = "NaN"
+        edge["txn_count"] = "oops"
+        edge["is_false"] = 3
+        edge["confidence"] = "inf"
+
+    path = _write_manifest(tmp_path, overrides=_bad)
+
+    with pytest.raises(OntologyValidationError) as exc:
+        validate_manifest_with_ontology(
+            manifest_path=str(path),
+            ontology_path="ontology/terror.ttl",
+            shapes_path="ontology/constraints.shacl.ttl",
+        )
+
+    msg = str(exc.value)
+    assert "invalid txn_amount_sum" in msg
+    assert "invalid txn_count" in msg
+    assert "invalid is_false" in msg
+    assert "invalid confidence" in msg
+
+
 def test_validate_manifest_with_ontology_temporal_interaction_failure(tmp_path: Path):
     def _bad(m):
         m["events"] = [

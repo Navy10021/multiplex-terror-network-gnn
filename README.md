@@ -1,22 +1,20 @@
-# 🔬🕸️ Multiplex Terror Network GNN (Ontology-First)
+# 🔬 Multiplex Terror Network GNN (Ontology-First)
 
-Synthetic multiplex terror-network generation + GNN learning/research stack with **ontology-driven validation, training regularization, and reporting**.
-
-> **Defensive research only**: this repository is for lawful, defensive CT/criminal-network methodology research on **synthetic data only**.
+> 합법적·방어적 목적의 **합성(Synthetic) 데이터 기반** 멀티플렉스 네트워크 연구 저장소입니다.
+>
+> ⚠️ 실제 작전/타게팅 용도로 사용하지 마세요.
 
 ---
 
-## TL;DR
+## 1) 프로젝트 개요
 
-This repo gives you an end-to-end pipeline:
+이 저장소는 다음 파이프라인을 제공합니다.
 
-1. **Generate** synthetic multiplex graphs (`hierarchy`, `finance`, `communication`, `operation`, `ideology`) with configurable structure/noise.
-2. **Validate with ontology** (OWL/SHACL contract + runtime checks).
-3. **Build PyG dataset** with ontology bridge tensors (`edge_ontology_attr`, `node_ontology_features`, `role_compatibility_mask`).
-4. **Train models** including optional ontology-aware losses (Phase D).
-5. **Run reporting** with ontology conformance metrics + node-level explanation artifacts (Phase E).
-
-Core one-command runner:
+1. 합성 멀티플렉스 네트워크 생성
+2. 온톨로지(OWL/SHACL + 런타임 룰) 검증
+3. PyG 데이터셋 변환
+4. 멀티태스크 GNN 학습(온톨로지 정규화 옵션)
+5. 리포팅/설명 아티팩트 생성
 
 ```bash
 python -m src.run_all \
@@ -28,225 +26,134 @@ python -m src.run_all \
 
 ---
 
-## Motivation
+## 2) 온톨로지 중심 설계가 중요한 이유
 
-Real-world hostile/criminal networks are hard to model because they are:
+멀티플렉스 위협 네트워크는 레이어별 의미가 다르고, 관측 노이즈·결측·오탐이 섞이며, 시간/역할/관계 제약이 성능에 큰 영향을 줍니다.
 
-- **Multiplex**: different semantics per layer.
-- **Noisy/partial**: missing edges, false edges, copied provenance.
-- **Constraint-heavy**: role-relation compatibility, temporal ordering, and consistency rules matter.
+이 프로젝트는 온톨로지를 **데이터 계약(data contract)** 으로 사용해 아래를 일관되게 맞춥니다.
 
-This project tackles that by centering ontology across the full lifecycle:
-
-- **Generation quality**: rule-conformant manifests, retry/telemetry in constrained mode.
-- **Learning signal**: ontology-aware regularizers in multitask training.
-- **Evaluation/explainability**: ontology conformance + violation rates in summary, and node-level explanation JSON with rule evidence.
+- 생성 단계 품질 통제 (strict / constrained / report_only)
+- 피처 엔지니어링(ontology bridge tensor)
+- 학습 손실 설계(ontology-aware loss)
+- 평가/설명(위반율, rule-chain 근거)
 
 ---
 
-## Highlights
+## 3) 온톨로지 구성요소 (구체 설명)
 
-### 1) Ontology assets and validator
+### 3.1 OWL 도메인 모델 (`ontology/terror.ttl`)
 
-- Ontology files:
-  - `ontology/terror.ttl`
-  - `ontology/constraints.shacl.ttl`
-- Python validator + loader:
-  - `src/ontology/validator.py`
-  - `src/ontology/load.py`
-- CLI:
+- 핵심 클래스: `Actor`, `Role`, `Relation`, `Event`, `Evidence`, `EdgeProvenance`, `InteractionRule`
+- 역할 타입: `Leader`, `Financier`, `Courier`, `Operative`, `Support`
+- 관계 타입: `HierarchyRelation`, `FinanceRelation`, `CommunicationRelation`, `OperationRelation`, `IdeologyRelation`
+- 주요 속성:
+  - 구조: `source`, `target`, `hasRole`
+  - 이벤트: `timestamp`, `eventType`
+  - 금융: `txnAmountSum`, `txnCount`
+  - provenance: `isFalseEdge`, `isCopiedEdge`, `copiedFromLayer`, `confidence`
+  - 레이어 상호작용: `fromLayer`, `toLayer`, `temporalWindowDays`, `ruleType`, `strength`
+
+### 3.2 SHACL 제약 (`ontology/constraints.shacl.ttl`)
+
+- `ActorRoleShape`: 역할 카드inality
+- `EventTimeShape`: timestamp는 0 이상
+- `EventTypeShape`: `comm|txn|op`
+- `FinanceEdgeAmountShape`: 거래 합계 양수
+- `HierarchyNoSelfLoopShape`: self-loop 금지
+- `ProvenanceConfidenceShape`: confidence는 [0,1]
+
+### 3.3 런타임 검증기 (`src/ontology/validator.py`)
+
+정적 SHACL만으로 부족한 제약을 실제 manifest 데이터로 검증합니다.
+
+- 역할 화이트리스트
+- 계층(hierarchy) 명령 역할 소스 제약
+- 금융값 유효성(양수/음수/비정상값)
+- 관계-역할 호환성
+- provenance 유효성 (`is_false`, `copied_from`, `confidence`)
+- `ontology.layer_interactions` 기반 시간 순서/지연 제약
+
+리포트 산출:
+
+- `conforms`
+- `violations`, `violations_by_check`
+- `violation_histogram`
+- `errors_by_check`
+- 카운트(노드/레이어/이벤트/위반)
+
+---
+
+## 4) 실행 모드
+
+| 모드 | 동작 | 권장 사용 |
+|---|---|---|
+| `strict` (기본) | 위반 시 즉시 실패 | 품질 보장 실험 |
+| `constrained` | seed 이동 재시도 | 제약 만족 manifest 확보 |
+| `report_only` | 위반 기록 후 계속 | 탐색/분석/디버깅 |
+
+예시:
+
+```bash
+python -m src.run_all \
+  --config configs/generator_baseline.json \
+  --size 800 --seed 2025 --out_root results \
+  --ontology_mode constrained
+```
+
+---
+
+## 5) 주요 산출물
+
+- `multiplex.json`
+- `ontology_validation_report.json`
+- `run_metadata.json`
+- `pyg_data.pt`
+- `multitask_metrics.json`
+- `reporting_summary/multitask_linkpred_summary.csv` (옵션)
+- `explanations/ontology_explanations.json` (옵션)
+
+---
+
+## 6) 설치
+
+```bash
+git clone https://github.com/Navy10021/multiplex-terror-network-gnn.git
+cd multiplex-terror-network-gnn
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.lock
+```
+
+CUDA/OS 환경에 따라 PyTorch/PyG 선설치가 필요할 수 있습니다.
+
+---
+
+## 7) 빠른 사용법
+
+### 7.1 E2E 실행
+
+```bash
+python -m src.run_all \
+  --config configs/generator_baseline.json \
+  --size 1200 --seed 2025 --out_root results
+```
+
+### 7.2 검증 전용 실행
 
 ```bash
 python -m src.cli.validate_ontology \
   --manifest data/multiplex_baseline/multiplex.json \
   --ontology ontology/terror.ttl \
-  --shapes ontology/constraints.shacl.ttl
+  --shapes ontology/constraints.shacl.ttl \
+  --json
 ```
 
-JSON output mode:
-
-```bash
-python -m src.cli.validate_ontology --manifest data/multiplex_baseline/multiplex.json --json
-```
-
-### 2) Generator v3 + ontology integration
-
-- `src/data/multiplex_generator_v3.py` supports ontology validation and constrained retries.
-- `src/run_all.py` writes `ontology_validation_report.json` and telemetry by default.
-- Ontology mode presets in runner:
-  - `--ontology_mode strict` (default)
-  - `--ontology_mode constrained`
-  - `--ontology_mode report_only`
-- Fine-grained legacy flags (backward compatible):
-  - `--ontology_constrained`
-  - `--ontology_max_retries`
-  - `--ontology_retry_seed_stride`
-  - `--no_ontology_strict`
-
-### 3) PyG builder ontology bridge (Phase C)
-
-`src/data/build_pyg_dataset_v3.py` produces:
-
-- `edge_ontology_attr`
-- `node_ontology_features`
-- `role_compatibility_mask`
-
-plus payload consistency checks against manifest ontology role counts/vocabulary.
-
-### 4) Model Zoo ontology-aware learning (Phase D)
-
-`src/models/train_multitask_gnn_v3.py` supports:
-
-- `--ontology_loss`
-- `--ontology_loss_role_weight`
-- `--ontology_loss_transitivity_weight`
-- `--ontology_loss_temporal_weight`
-- `--ontology_max_triplets`
-
-and persists ontology loss settings/final values into `multitask_metrics.json`.
-
-### 5) Reporting + explanations (Phase E)
-
-- `src/analysis/plot_multitask_linkpred_summary.py` now includes ontology columns, e.g.:
-  - `ontology_conforms`
-  - `ontology_violations_per_1k_edges`
-  - ontology-loss diagnostics
-- `src/run_all.py` adds:
-  - `--run_reporting_summary`
-  - `--write_explanations`
-  - `--explanations_top_k`
-- Generated artifacts:
-  - `reporting_summary/multitask_linkpred_summary.csv`
-  - `ontology_benchmark_table.csv` / `ontology_benchmark_table.md` (via summary `--write_benchmark_table`)
-  - `explanations/ontology_explanations.json`
-    - includes `rule_chains` (violated/satisfied checks) and `confidence_alignment`
-
----
-
-## Project Structure
-
-```text
-multiplex-terror-network-gnn/
-├── README.md
-├── PLANS.md
-├── PLANS_KOR.md
-├── requirements.txt
-├── requirements.lock
-├── configs/
-│   ├── generator_easy.json
-│   ├── generator_baseline.json
-│   └── generator_hard.json
-├── ontology/
-│   ├── terror.ttl
-│   └── constraints.shacl.ttl
-├── src/
-│   ├── run_all.py
-│   ├── cli/
-│   │   └── validate_ontology.py
-│   ├── ontology/
-│   │   ├── load.py
-│   │   └── validator.py
-│   ├── data/
-│   │   ├── multiplex_generator_v3.py
-│   │   ├── build_pyg_dataset_v3.py
-│   │   └── basic_diagnostics_v3.py
-│   ├── models/
-│   │   ├── train_multitask_gnn_v3.py
-│   │   ├── train_hvt_gnn_v3.py
-│   │   └── train_linkpred_layer_v3.py
-│   ├── analysis/
-│   │   └── plot_multitask_linkpred_summary.py
-│   └── validation/
-│       └── schema.py
-└── tests/
-    └── test_*.py
-```
-
----
-
-## Installation
-
-### 1) Clone
-
-```bash
-git clone https://github.com/Navy10021/multiplex-terror-network-gnn.git
-cd multiplex-terror-network-gnn
-```
-
-### 2) Python env (recommended)
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-(or use conda if preferred)
-
-### 3) Install dependencies
-
-```bash
-pip install -r requirements.lock
-```
-
-If you need custom torch/pyg wheels for your CUDA/OS, use `requirements.txt` and install PyTorch/PyG first.
-
----
-
-## Quick Start
-
-### A) End-to-end run
-
-```bash
-python -m src.run_all \
-  --config configs/generator_baseline.json \
-  --size 1500 \
-  --seed 2025 \
-  --out_root results
-```
-
-### B) End-to-end with Phase E reporting artifacts
-
-```bash
-python -m src.run_all \
-  --config configs/generator_baseline.json \
-  --size 800 \
-  --seed 2025 \
-  --out_root results \
-  --run_reporting_summary \
-  --write_explanations
-```
-
-### C) Ontology mode presets
-
-```bash
-python -m src.run_all \
-  --config configs/generator_baseline.json \
-  --size 800 \
-  --seed 2025 \
-  --out_root results \
-  --ontology_mode constrained
-```
-
-### D) Ontology-constrained generation mode (legacy flags)
-
-```bash
-python -m src.run_all \
-  --config configs/generator_baseline.json \
-  --size 800 \
-  --seed 2025 \
-  --out_root results \
-  --ontology_constrained \
-  --ontology_max_retries 3 \
-  --ontology_retry_seed_stride 1
-```
-
-### E) Multitask training with ontology loss (Phase D)
+### 7.3 온톨로지 손실 포함 학습
 
 ```bash
 python -m src.models.train_multitask_gnn_v3 \
-  --data_path results/<your_run>/pyg_data.pt \
-  --encoder transformer \
-  --epochs 20 \
+  --data_path results/<run>/pyg_data.pt \
+  --encoder transformer --epochs 20 \
   --ontology_loss \
   --ontology_loss_role_weight 0.2 \
   --ontology_loss_transitivity_weight 0.1 \
@@ -255,33 +162,26 @@ python -m src.models.train_multitask_gnn_v3 \
 
 ---
 
-## Ontology-based Terror Network: Current Status
+## 8) 보안/견고성 점검 포인트
 
-### ✅ Implemented (current code)
-
-- **Phase A**: validator depth expansion (rule-level violation objects, check histograms, temporal/relation/provenance checks).
-- **Phase B**: ontology-constrained retry generation with telemetry.
-- **Phase C**: PyG ontology bridge tensors + consistency checks.
-- **Phase D**: ontology-aware multitask regularizers + ablation CLI + metrics logging.
-- **Phase E**: ontology-aware reporting metrics + node-level explanation artifact generation.
-
-### Key ontology artifacts produced per run
-
-- `ontology_validation_report.json`
-- `run_metadata.json` (including ontology paths/status/telemetry and Phase E artifact paths)
-- `reporting_summary/multitask_linkpred_summary.csv` *(optional via flag)*
-- `explanations/ontology_explanations.json` *(optional via flag)*
-
-### Next-up focus
-
-- richer rule-grounded explanations (model attribution + rule chain alignment),
-- better calibration between model confidence and ontology conflict signals,
-- broader ontology-aware benchmarking across difficulty presets and seeds.
+- `pyg_data.pt`는 pickle 기반 로딩 경로(`torch.load(weights_only=False)`)를 사용하므로 **신뢰 가능한 파일만** 로드하세요.
+- `strict` 모드 실패는 시스템 오류가 아니라 제약 위반일 수 있습니다. 필요 시 `report_only` 또는 `constrained`로 전환하세요.
+- 온톨로지 검증기는 비정상 수치(`NaN`, `inf`, 비숫자 문자열)도 위반으로 안전하게 처리합니다.
 
 ---
 
-## Plans
+## 9) 개발자 검증 명령
 
-- English roadmap: `PLANS.md`
-- Korean roadmap: `PLANS_KOR.md`
+```bash
+pytest -q
+python -m src.run_all --help
+python -m src.cli.validate_ontology --help
+```
+
+---
+
+## 10) 로드맵
+
+- English: `PLANS.md`
+- 한국어: `PLANS_KOR.md`
 
