@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
@@ -61,6 +62,24 @@ def _violation(
         "severity": severity,
         "affected_ids": affected_ids or [],
     }
+
+
+def _to_float(value: Any) -> Tuple[float | None, str | None]:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None, f"non-numeric value={value!r}"
+    if not math.isfinite(out):
+        return None, f"non-finite value={value!r}"
+    return out, None
+
+
+def _to_int(value: Any) -> Tuple[int | None, str | None]:
+    try:
+        out = int(value)
+    except (TypeError, ValueError):
+        return None, f"non-integer value={value!r}"
+    return out, None
 
 
 def _validate_ontology_contract(ontology_text: str, shapes_text: str) -> List[Dict[str, Any]]:
@@ -142,26 +161,48 @@ def _validate_finance(manifest: Manifest) -> List[Dict[str, Any]]:
 
     for idx, edge in enumerate(finance.edges):
         amount = getattr(edge, "txn_amount_sum", None)
-        if amount is not None and float(amount) <= 0:
-            violations.append(
-                _violation(
-                    check="finance",
-                    rule_id="finance.amount_positive",
-                    message=f"finance edge {idx} has non-positive txn_amount_sum={amount}",
-                    affected_ids=[edge.source, edge.target],
+        if amount is not None:
+            amount_val, amount_err = _to_float(amount)
+            if amount_err:
+                violations.append(
+                    _violation(
+                        check="finance",
+                        rule_id="finance.amount_numeric",
+                        message=f"finance edge {idx} has invalid txn_amount_sum ({amount_err})",
+                        affected_ids=[edge.source, edge.target],
+                    )
                 )
-            )
+            elif amount_val <= 0:
+                violations.append(
+                    _violation(
+                        check="finance",
+                        rule_id="finance.amount_positive",
+                        message=f"finance edge {idx} has non-positive txn_amount_sum={amount}",
+                        affected_ids=[edge.source, edge.target],
+                    )
+                )
 
         txn_count = getattr(edge, "txn_count", None)
-        if txn_count is not None and float(txn_count) < 0:
-            violations.append(
-                _violation(
-                    check="finance",
-                    rule_id="finance.txn_count_non_negative",
-                    message=f"finance edge {idx} has negative txn_count={txn_count}",
-                    affected_ids=[edge.source, edge.target],
+        if txn_count is not None:
+            count_val, count_err = _to_float(txn_count)
+            if count_err:
+                violations.append(
+                    _violation(
+                        check="finance",
+                        rule_id="finance.txn_count_numeric",
+                        message=f"finance edge {idx} has invalid txn_count ({count_err})",
+                        affected_ids=[edge.source, edge.target],
+                    )
                 )
-            )
+            elif count_val < 0:
+                violations.append(
+                    _violation(
+                        check="finance",
+                        rule_id="finance.txn_count_non_negative",
+                        message=f"finance edge {idx} has negative txn_count={txn_count}",
+                        affected_ids=[edge.source, edge.target],
+                    )
+                )
 
     return violations
 
@@ -169,7 +210,17 @@ def _validate_finance(manifest: Manifest) -> List[Dict[str, Any]]:
 def _validate_events(manifest: Manifest) -> List[Dict[str, Any]]:
     violations: List[Dict[str, Any]] = []
     for idx, event in enumerate(manifest.events or []):
-        if int(event.time) < 0:
+        time_val, time_err = _to_int(event.time)
+        if time_err:
+            violations.append(
+                _violation(
+                    check="events",
+                    rule_id="events.time_integer",
+                    message=f"event {idx} has invalid timestamp ({time_err})",
+                    affected_ids=[event.u, event.v],
+                )
+            )
+        elif time_val < 0:
             violations.append(
                 _violation(
                     check="events",
@@ -248,26 +299,40 @@ def _validate_provenance(manifest: Manifest) -> List[Dict[str, Any]]:
     violations: List[Dict[str, Any]] = []
     for layer_name, edge in _iter_layer_edges(manifest):
         is_false = getattr(edge, "is_false", None)
-        if is_false is not None and int(is_false) not in (0, 1):
-            violations.append(
-                _violation(
-                    check="provenance",
-                    rule_id="provenance.is_false_binary",
-                    message=f"{layer_name} edge ({edge.source}->{edge.target}) has invalid is_false={is_false}",
-                    affected_ids=[edge.source, edge.target],
+        if is_false is not None:
+            is_false_val, is_false_err = _to_int(is_false)
+            if is_false_err or is_false_val not in (0, 1):
+                details = is_false_err or f"expected 0/1, got {is_false!r}"
+                violations.append(
+                    _violation(
+                        check="provenance",
+                        rule_id="provenance.is_false_binary",
+                        message=f"{layer_name} edge ({edge.source}->{edge.target}) has invalid is_false ({details})",
+                        affected_ids=[edge.source, edge.target],
+                    )
                 )
-            )
 
         confidence = getattr(edge, "confidence", None)
-        if confidence is not None and not (0.0 <= float(confidence) <= 1.0):
-            violations.append(
-                _violation(
-                    check="provenance",
-                    rule_id="provenance.confidence_range",
-                    message=f"{layer_name} edge ({edge.source}->{edge.target}) has out-of-range confidence={confidence}",
-                    affected_ids=[edge.source, edge.target],
+        if confidence is not None:
+            conf_val, conf_err = _to_float(confidence)
+            if conf_err:
+                violations.append(
+                    _violation(
+                        check="provenance",
+                        rule_id="provenance.confidence_numeric",
+                        message=f"{layer_name} edge ({edge.source}->{edge.target}) has invalid confidence ({conf_err})",
+                        affected_ids=[edge.source, edge.target],
+                    )
                 )
-            )
+            elif not (0.0 <= conf_val <= 1.0):
+                violations.append(
+                    _violation(
+                        check="provenance",
+                        rule_id="provenance.confidence_range",
+                        message=f"{layer_name} edge ({edge.source}->{edge.target}) has out-of-range confidence={confidence}",
+                        affected_ids=[edge.source, edge.target],
+                    )
+                )
 
         copied_from = getattr(edge, "copied_from", None)
         if copied_from is None:
