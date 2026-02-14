@@ -7,7 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.analysis.plot_multitask_linkpred_summary import build_runs_dataframe
+from src.analysis.plot_multitask_linkpred_summary import build_runs_dataframe, build_benchmark_table
 from src.run_all import _build_node_explanations
 
 
@@ -47,6 +47,10 @@ def test_reporting_dataframe_includes_ontology_columns(tmp_path: Path):
         run_dir / "ontology_validation_report.json",
         {"conforms": False, "violations_total": 2},
     )
+    _write_json(
+        run_dir / "run_metadata.json",
+        {"ontology_mode_resolved": "report_only", "ontology_strict_mode": False},
+    )
 
     df = build_runs_dataframe([str(run_dir)], difficulty_mode="auto")
     assert len(df) == 1
@@ -56,6 +60,7 @@ def test_reporting_dataframe_includes_ontology_columns(tmp_path: Path):
     assert "ontology_loss_enabled" in df.columns
     assert float(row["ontology_conforms"]) == 0.0
     assert float(row["ontology_loss_enabled"]) == 1.0
+    assert row["ontology_mode_resolved"] == "report_only"
 
 
 def test_run_all_help_includes_phase_e_flags():
@@ -95,3 +100,35 @@ def test_build_node_explanations_maps_violations_to_targets():
     assert "violated" in exp0["ontology_evidence"]["rule_chains"]
     assert "confidence_alignment" in exp0
     assert 0.0 <= float(exp0["confidence_alignment"]["alignment_score"]) <= 1.0
+
+
+
+def test_build_benchmark_table_compacts_modes(tmp_path: Path):
+    run_dir = tmp_path / "run_easy_seed3"
+    run_dir.mkdir(parents=True)
+    _write_json(
+        run_dir / "multitask_metrics.json",
+        {
+            "seed": 3,
+            "hvt_threshold_tuned": {"test": {"f1": 0.5, "auc": 0.7}},
+            "fixed_threshold": {"test": {"role_f1_macro": 0.6, "imp_r2": 0.4}},
+            "ontology_loss": {"enabled": False, "final_epoch_losses": {}},
+        },
+    )
+    _write_json(
+        run_dir / "multiplex.json",
+        {
+            "meta": {"config": {"finance_structure_strength": 1.2, "comm_structure_strength": 1.2, "comm_randomness": 0.05}},
+            "layers": {"hierarchy": {"directed": True, "edges": [{"source": 0, "target": 1}]}},
+            "events": [],
+        },
+    )
+    _write_json(run_dir / "ontology_validation_report.json", {"conforms": True, "violations_total": 0})
+    _write_json(run_dir / "run_metadata.json", {"ontology_mode_resolved": "strict", "ontology_strict_mode": True})
+
+    df = build_runs_dataframe([str(run_dir)], difficulty_mode="auto")
+    bench = build_benchmark_table(df)
+    assert len(bench) == 1
+    assert "ontology_mode_resolved" in bench.columns
+    assert "ontology_loss_enabled" in bench.columns
+    assert bench.iloc[0]["ontology_mode_resolved"] == "strict"

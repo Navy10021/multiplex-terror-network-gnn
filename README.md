@@ -117,6 +117,7 @@ and persists ontology loss settings/final values into `multitask_metrics.json`.
   - `--explanations_top_k`
 - Generated artifacts:
   - `reporting_summary/multitask_linkpred_summary.csv`
+  - `ontology_benchmark_table.csv` / `ontology_benchmark_table.md` (via summary `--write_benchmark_table`)
   - `explanations/ontology_explanations.json`
     - includes `rule_chains` (violated/satisfied checks) and `confidence_alignment`
 

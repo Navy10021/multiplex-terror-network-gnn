@@ -215,6 +215,8 @@
 - explanation JSON에 모델 근거 + 온톨로지 규칙 체인이 함께 기록.
 - README에 실제 설명 예시 1건 이상 제공.
 
+- [x] **F3 완료/반영**: benchmark table export(`ontology_benchmark_table.csv/.md`) + mode/loss 비교 컬럼 추가
+
 ### F3 — 리포팅/벤치마크 표준화
 
 **작업**

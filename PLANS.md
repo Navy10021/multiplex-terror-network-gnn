@@ -234,6 +234,8 @@ This order minimizes regression risk and enables measurable gains at each step.
 - Explanation JSON contains both model attribution and ontology rule chains.
 - README includes one realistic explanation example.
 
+- [x] **F3 completed**: benchmark table export (`ontology_benchmark_table.csv/.md`) + mode/loss comparison columns
+
 ### F3 — Reporting/benchmark standardization
 
 **Actions**
