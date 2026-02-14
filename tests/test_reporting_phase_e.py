@@ -7,7 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.analysis.plot_multitask_linkpred_summary import build_runs_dataframe, build_benchmark_table
+from src.analysis.plot_multitask_linkpred_summary import build_benchmark_table, build_runs_dataframe
 from src.run_all import _build_node_explanations
 
 

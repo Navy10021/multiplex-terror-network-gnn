@@ -29,6 +29,8 @@ def test_run_all_help_includes_ontology_mode():
     )
     assert proc.returncode == 0, proc.stderr
     assert "--ontology_mode" in proc.stdout
+    assert "--ontology_retry_rule_ids" in proc.stdout
+    assert "--ontology_constrained_fallback_report_only" in proc.stdout
 
 
 def test_resolve_ontology_mode_presets():

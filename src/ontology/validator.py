@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 from src.ontology.load import ensure_ontology_assets
+from src.ontology.report_schema import validate_ontology_report_schema
 from src.validation.schema import (
     Manifest,
     ManifestValidationError,
@@ -40,6 +41,60 @@ _REQUIRED_SHAPES_TERMS = (
 )
 
 
+def _check_ontology_contract(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del manifest, manifest_dict
+    ontology_text = _read_text(assets["ontology"])
+    shapes_text = _read_text(assets["shapes"])
+    return _validate_ontology_contract(ontology_text, shapes_text)
+
+
+def _check_roles(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del assets, manifest_dict
+    return _validate_roles(manifest)
+
+
+def _check_hierarchy(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del assets, manifest_dict
+    return _validate_hierarchy(manifest)
+
+
+def _check_finance(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del assets, manifest_dict
+    return _validate_finance(manifest)
+
+
+def _check_events(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del assets, manifest_dict
+    return _validate_events(manifest)
+
+
+def _check_relation_role_compatibility(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del assets, manifest_dict
+    return _validate_relation_role_compatibility(manifest)
+
+
+def _check_provenance(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del assets, manifest_dict
+    return _validate_provenance(manifest)
+
+
+def _check_temporal_interactions(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del assets
+    return _validate_temporal_interactions(manifest, manifest_dict)
+
+
+RULE_REGISTRY = {
+    "ontology_contract": _check_ontology_contract,
+    "roles": _check_roles,
+    "hierarchy": _check_hierarchy,
+    "finance": _check_finance,
+    "events": _check_events,
+    "relation_role_compatibility": _check_relation_role_compatibility,
+    "provenance": _check_provenance,
+    "temporal_interactions": _check_temporal_interactions,
+}
+
+
 def _read_text(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
@@ -62,6 +117,18 @@ def _violation(
         "severity": severity,
         "affected_ids": affected_ids or [],
     }
+
+
+def _action_hint_for_rule(rule_id: str) -> str:
+    hints = {
+        "roles.allowed": "Fix node role labels in generator config (role_probs keys).",
+        "hierarchy.command_source_role": "Adjust hierarchy generation so source role is leader/financier/operative.",
+        "hierarchy.no_self_loop": "Disable self-loops when sampling hierarchy edges.",
+        "finance.amount_positive": "Ensure txn_amount_sum is positive in finance edge attributes.",
+        "events.time_non_negative": "Set event timeline to non-negative day index (check num_days/offset logic).",
+        "provenance.confidence_range": "Clamp confidence to [0,1] and verify provenance mapping.",
+    }
+    return hints.get(rule_id, "Review generator config and manifest export for this rule.")
 
 
 def _to_float(value: Any) -> Tuple[float | None, str | None]:
@@ -429,18 +496,9 @@ def _validate_temporal_interactions(manifest: Manifest, manifest_dict: Dict[str,
 
 
 def _build_report(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> Dict[str, Any]:
-    ontology_text = _read_text(assets["ontology"])
-    shapes_text = _read_text(assets["shapes"])
-
     checks: Dict[str, List[Dict[str, Any]]] = {
-        "ontology_contract": _validate_ontology_contract(ontology_text, shapes_text),
-        "roles": _validate_roles(manifest),
-        "hierarchy": _validate_hierarchy(manifest),
-        "finance": _validate_finance(manifest),
-        "events": _validate_events(manifest),
-        "relation_role_compatibility": _validate_relation_role_compatibility(manifest),
-        "provenance": _validate_provenance(manifest),
-        "temporal_interactions": _validate_temporal_interactions(manifest, manifest_dict),
+        check_name: rule_fn(manifest, assets, manifest_dict)
+        for check_name, rule_fn in RULE_REGISTRY.items()
     }
 
     all_violations: List[Dict[str, Any]] = []
@@ -455,7 +513,7 @@ def _build_report(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dic
 
     errors_by_check = {k: [v["message"] for v in vlist] for k, vlist in checks.items()}
 
-    return {
+    report = {
         "conforms": len(failure_violations) == 0,
         "constraints_checked": len(checks),
         "errors": [v["message"] for v in failure_violations],
@@ -472,6 +530,36 @@ def _build_report(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dic
             "violations_error": len(failure_violations),
         },
     }
+
+    violations_for_update = report.get("violations", [])
+    if not isinstance(violations_for_update, list):
+        violations_for_update = []
+
+    for violation in violations_for_update:
+        if not isinstance(violation, dict):
+            continue
+        rid = str(violation.get("rule_id", ""))
+        hint = _action_hint_for_rule(rid)
+        msg = str(violation.get("message", ""))
+        if "Action:" not in msg:
+            violation["message"] = f"{msg} | Action: {hint}"
+
+    report["errors"] = [
+        str(v.get("message", ""))
+        for v in violations_for_update
+        if isinstance(v, dict) and str(v.get("severity", "error")) in {"error", "critical"}
+    ]
+
+    by_check = report.get("violations_by_check")
+    if not isinstance(by_check, dict):
+        by_check = {}
+    report["errors_by_check"] = {
+        str(k): [str(v.get("message", "")) for v in vlist if isinstance(v, dict)]
+        for k, vlist in by_check.items()
+        if isinstance(vlist, list)
+    }
+
+    return validate_ontology_report_schema(report)
 
 
 def _raise_if_invalid(report: Dict[str, Any]) -> None:

@@ -1,16 +1,13 @@
-# Core scientific stack (pinned for reproducibility)
-numpy==1.26.4
-pandas==2.2.2
-scikit-learn==1.4.2
-matplotlib==3.8.4
-networkx==3.3
+# Minimal dependency ranges (cross-platform, no CUDA/OS-specific wheels)
+numpy>=1.26,<2.1
+pandas>=2.2,<2.4
+scikit-learn>=1.4,<1.7
+matplotlib>=3.8,<3.11
+networkx>=3.3,<3.5
+pydantic>=1.10,<3
 
-# Deep learning / GNN
-# NOTE: PyTorch and torch-geometric should be installed
-# according to your CUDA/OS environment.
-torch==2.2.2
-torch-geometric==2.5.3
+# test runner
+pytest>=8,<10
 
-# CLI / Validation
-argparse==1.4.0
-pydantic==1.10.18
+# torch/torch-geometric are intentionally excluded.
+# Install them via environment-specific guidance in docs/INSTALL.md.
