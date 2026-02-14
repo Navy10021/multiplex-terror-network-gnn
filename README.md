@@ -229,7 +229,7 @@ python -m src.cli.validate_ontology \
   --json
 ```
 
-`src/data/multiplex_generator_v3.py` and `src/run_all.py` also run ontology checks and write `ontology_validation_report.json` by default. Use `--no_ontology_strict` to keep running while recording violations.
+`src/data/multiplex_generator_v3.py` and `src/run_all.py` also run ontology checks and write `ontology_validation_report.json` by default. Use `--no_ontology_strict` to keep running while recording violations. For retry-based constrained generation (Phase B), enable `--ontology_constrained` with `--ontology_max_retries` and `--ontology_retry_seed_stride`.
 
 ## 🧭 Ontology-based Terror Network: Current Status & Next Focus
 

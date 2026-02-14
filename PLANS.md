@@ -9,7 +9,7 @@ This document is a forward engineering plan focused on upgrading this repository
 ## 0) Execution status
 
 - [x] **Phase A started**: validator depth expansion implemented (rule-level violations, severity, affected IDs, histogram, temporal/relation-role/provenance checks).
-- [ ] Phase B
+- [x] **Phase B started**: ontology-constrained generation retries + telemetry wired in generator/run pipeline
 - [ ] Phase C
 - [ ] Phase D
 - [ ] Phase E

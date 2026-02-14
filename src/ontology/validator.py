@@ -419,6 +419,7 @@ def validate_manifest_dict_with_ontology(
     manifest_dict: Dict[str, Any],
     ontology_path: str,
     shapes_path: str,
+    strict: bool = True,
 ) -> Dict[str, Any]:
     try:
         assets = ensure_ontology_assets(ontology_path=ontology_path, shapes_path=shapes_path)
@@ -431,7 +432,8 @@ def validate_manifest_dict_with_ontology(
         raise OntologyValidationError(f"manifest schema validation failed: {exc}") from exc
 
     report = _build_report(manifest, assets, manifest_dict)
-    _raise_if_invalid(report)
+    if strict:
+        _raise_if_invalid(report)
     return report
 
 
@@ -439,6 +441,7 @@ def validate_manifest_with_ontology(
     manifest_path: str,
     ontology_path: str,
     shapes_path: str,
+    strict: bool = True,
 ) -> Dict[str, Any]:
     try:
         assets = ensure_ontology_assets(ontology_path=ontology_path, shapes_path=shapes_path)
@@ -452,7 +455,8 @@ def validate_manifest_with_ontology(
 
     manifest_dict = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     report = _build_report(manifest, assets, manifest_dict)
-    _raise_if_invalid(report)
+    if strict:
+        _raise_if_invalid(report)
     return report
 
 

@@ -26,6 +26,7 @@ from src.data.basic_diagnostics_v3 import (
 from src.data.build_pyg_dataset_v3 import build_pyg_data
 from src.data.multiplex_generator_v3 import (
     generate_multiplex_with_config,
+    generate_with_ontology_constraints,
     load_generator_config,
 )
 from src.ontology.validator import (
@@ -109,6 +110,9 @@ def main() -> None:
     parser.add_argument("--ontology", type=str, default="ontology/terror.ttl", help="Ontology TTL path")
     parser.add_argument("--shapes", type=str, default="ontology/constraints.shacl.ttl", help="SHACL constraints path")
     parser.add_argument("--no_ontology_strict", action="store_true", help="Do not fail run on ontology-rule violations")
+    parser.add_argument("--ontology_constrained", action="store_true", help="Retry generation with shifted seeds until ontology validation conforms")
+    parser.add_argument("--ontology_max_retries", type=int, default=3, help="Max generation attempts in ontology_constrained mode")
+    parser.add_argument("--ontology_retry_seed_stride", type=int, default=1, help="Seed increment per attempt in ontology_constrained mode")
     args = parser.parse_args()
 
     run_dir = build_artifact_dir(args.out_root, args.config, args.seed, prefix="run")
@@ -116,22 +120,40 @@ def main() -> None:
     print(f"[*] Run directory: {run_dir}")
 
     cfg = load_generator_config(args.config, size=args.size, seed=args.seed)
-    manifest = generate_multiplex_with_config(cfg)
-    manifest_model = validate_manifest_dict(manifest)
 
-    ontology_report = {"conforms": True, "constraints_checked": 0, "errors": []}
-    try:
+    ontology_telemetry = {"mode": "single_pass", "attempts": 1, "failed_attempts": 0}
+    if args.ontology_constrained:
+        manifest, ontology_report, ontology_telemetry = generate_with_ontology_constraints(
+            cfg=cfg,
+            ontology_path=args.ontology,
+            shapes_path=args.shapes,
+            max_retries=args.ontology_max_retries,
+            retry_seed_stride=args.ontology_retry_seed_stride,
+        )
+        if ontology_report.get("conforms", False):
+            print(f"[*] Ontology-constrained generation passed at attempt {ontology_telemetry.get('successful_attempt')}")
+        else:
+            msg = "ontology-constrained generation exhausted retries without conformance"
+            if not args.no_ontology_strict:
+                raise OntologyValidationError(msg)
+            print(f"[!] Ontology validation warning (strict disabled): {msg}")
+    else:
+        manifest = generate_multiplex_with_config(cfg)
         ontology_report = validate_manifest_dict_with_ontology(
             manifest_dict=manifest,
             ontology_path=args.ontology,
             shapes_path=args.shapes,
+            strict=False,
         )
-        print("[*] Ontology validation passed")
-    except OntologyValidationError as exc:
-        ontology_report = {"conforms": False, "constraints_checked": 4, "errors": [str(exc)]}
-        if not args.no_ontology_strict:
-            raise
-        print(f"[!] Ontology validation warning (strict disabled): {exc}")
+        if ontology_report.get("conforms", False):
+            print("[*] Ontology validation passed")
+        elif not args.no_ontology_strict:
+            raise OntologyValidationError("ontology validation failed: " + "; ".join(ontology_report.get("errors", [])))
+        else:
+            print("[!] Ontology validation warning (strict disabled)")
+
+    ontology_report["generation_telemetry"] = ontology_telemetry
+    manifest_model = validate_manifest_dict(manifest)
 
     ontology_report_path = os.path.join(run_dir, "ontology_validation_report.json")
     write_ontology_report(ontology_report, ontology_report_path)
@@ -165,6 +187,7 @@ def main() -> None:
             "diagnostics_dir": os.path.abspath(diagnostics_dir) if diagnostics_dir else None,
             "ontology_report": os.path.abspath(ontology_report_path),
             "ontology_conforms": bool(ontology_report.get("conforms", False)),
+            "ontology_generation_telemetry": ontology_telemetry,
         },
     )
     meta_path = write_run_metadata(run_dir, metadata)

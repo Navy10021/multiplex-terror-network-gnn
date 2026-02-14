@@ -9,7 +9,7 @@
 ## 0) 실행 상태
 
 - [x] **Phase A 시작/반영**: validator 심화(규칙 단위 위반, severity, affected IDs, histogram, 시간/관계-역할/provenance 점검)
-- [ ] Phase B
+- [x] **Phase B 시작/반영**: ontology 제약기반 재시도 생성 + telemetry를 generator/run 파이프라인에 연동
 - [ ] Phase C
 - [ ] Phase D
 - [ ] Phase E
