@@ -1,22 +1,20 @@
 # 🔬🕸️ Multiplex Terror Network GNN (Ontology-First)
 
-Synthetic multiplex terror-network generation + GNN learning/research stack with **ontology-driven validation, training regularization, and reporting**.
-
-> **Defensive research only**: this repository is for lawful, defensive CT/criminal-network methodology research on **synthetic data only**.
+> **Synthetic multiplex terror-network research stack** for lawful, defensive analysis.
+>
+> This repository is strictly for **defensive methodology R&D on synthetic data** (no real operational targeting use).
 
 ---
 
-## TL;DR
+## ✨ What this project gives you
 
-This repo gives you an end-to-end pipeline:
+An end-to-end pipeline that treats ontology as a first-class engineering contract:
 
-1. **Generate** synthetic multiplex graphs (`hierarchy`, `finance`, `communication`, `operation`, `ideology`) with configurable structure/noise.
-2. **Validate with ontology** (OWL/SHACL contract + runtime checks).
-3. **Build PyG dataset** with ontology bridge tensors (`edge_ontology_attr`, `node_ontology_features`, `role_compatibility_mask`).
-4. **Train models** including optional ontology-aware losses (Phase D).
-5. **Run reporting** with ontology conformance metrics + node-level explanation artifacts (Phase E).
-
-Core one-command runner:
+1. **Generate** synthetic multiplex graphs (`hierarchy`, `finance`, `communication`, `operation`, `ideology`).
+2. **Validate** graph manifests against ontology + SHACL + runtime rule checks.
+3. **Build** PyTorch Geometric artifacts with ontology bridge tensors.
+4. **Train** multitask GNNs with optional ontology-aware regularization.
+5. **Report & explain** using conformance/violation metrics and node-level explanation JSON.
 
 ```bash
 python -m src.run_all \
@@ -28,171 +26,112 @@ python -m src.run_all \
 
 ---
 
-## Motivation
+## 🧭 Why ontology-first for multiplex threat-network simulation?
 
-Real-world hostile/criminal networks are hard to model because they are:
+Multiplex hostile/criminal network modeling is difficult because:
 
-- **Multiplex**: different semantics per layer.
-- **Noisy/partial**: missing edges, false edges, copied provenance.
-- **Constraint-heavy**: role-relation compatibility, temporal ordering, and consistency rules matter.
+- **Semantics differ by layer** (money-flow vs command vs communication).
+- **Data quality degrades** with missing links, false links, and copied provenance.
+- **Reasoning constraints matter** (role compatibility, temporal ordering, confidence bounds).
 
-This project tackles that by centering ontology across the full lifecycle:
+This project uses ontology to encode these semantics/constraints as a reusable contract across:
 
-- **Generation quality**: rule-conformant manifests, retry/telemetry in constrained mode.
-- **Learning signal**: ontology-aware regularizers in multitask training.
-- **Evaluation/explainability**: ontology conformance + violation rates in summary, and node-level explanation JSON with rule evidence.
-
----
-
-## Highlights
-
-### 1) Ontology assets and validator
-
-- Ontology files:
-  - `ontology/terror.ttl`
-  - `ontology/constraints.shacl.ttl`
-- Python validator + loader:
-  - `src/ontology/validator.py`
-  - `src/ontology/load.py`
-- CLI:
-
-```bash
-python -m src.cli.validate_ontology \
-  --manifest data/multiplex_baseline/multiplex.json \
-  --ontology ontology/terror.ttl \
-  --shapes ontology/constraints.shacl.ttl
-```
-
-JSON output mode:
-
-```bash
-python -m src.cli.validate_ontology --manifest data/multiplex_baseline/multiplex.json --json
-```
-
-### 2) Generator v3 + ontology integration
-
-- `src/data/multiplex_generator_v3.py` supports ontology validation and constrained retries.
-- `src/run_all.py` writes `ontology_validation_report.json` and telemetry by default.
-- Ontology mode presets in runner:
-  - `--ontology_mode strict` (default)
-  - `--ontology_mode constrained`
-  - `--ontology_mode report_only`
-- Fine-grained legacy flags (backward compatible):
-  - `--ontology_constrained`
-  - `--ontology_max_retries`
-  - `--ontology_retry_seed_stride`
-  - `--no_ontology_strict`
-
-### 3) PyG builder ontology bridge (Phase C)
-
-`src/data/build_pyg_dataset_v3.py` produces:
-
-- `edge_ontology_attr`
-- `node_ontology_features`
-- `role_compatibility_mask`
-
-plus payload consistency checks against manifest ontology role counts/vocabulary.
-
-### 4) Model Zoo ontology-aware learning (Phase D)
-
-`src/models/train_multitask_gnn_v3.py` supports:
-
-- `--ontology_loss`
-- `--ontology_loss_role_weight`
-- `--ontology_loss_transitivity_weight`
-- `--ontology_loss_temporal_weight`
-- `--ontology_max_triplets`
-
-and persists ontology loss settings/final values into `multitask_metrics.json`.
-
-### 5) Reporting + explanations (Phase E)
-
-- `src/analysis/plot_multitask_linkpred_summary.py` now includes ontology columns, e.g.:
-  - `ontology_conforms`
-  - `ontology_violations_per_1k_edges`
-  - ontology-loss diagnostics
-- `src/run_all.py` adds:
-  - `--run_reporting_summary`
-  - `--write_explanations`
-  - `--explanations_top_k`
-- Generated artifacts:
-  - `reporting_summary/multitask_linkpred_summary.csv`
-  - `ontology_benchmark_table.csv` / `ontology_benchmark_table.md` (via summary `--write_benchmark_table`)
-  - `explanations/ontology_explanations.json`
-    - includes `rule_chains` (violated/satisfied checks) and `confidence_alignment`
+- **Data generation quality control** (strict/constrained/report-only modes)
+- **Feature engineering** (ontology bridge tensors)
+- **Learning objective design** (ontology-aware losses)
+- **Evaluation and explainability** (violation histograms + rule chain evidence)
 
 ---
 
-## Project Structure
+## 🧠 Ontology concepts (concrete)
+
+### 1) OWL ontology (`ontology/terror.ttl`)
+
+The ontology defines core classes and properties used as the domain vocabulary:
+
+- **Classes**: `Actor`, `Role`, `Relation`, `Event`, `Evidence`, `EdgeProvenance`, `LayerInteraction`, `InteractionRule`
+- **Role subclasses**: `Leader`, `Financier`, `Courier`, `Operative`, `Support`
+- **Layer relation subclasses**: `HierarchyRelation`, `FinanceRelation`, `CommunicationRelation`, `OperationRelation`, `IdeologyRelation`
+- **Key properties**:
+  - structural: `source`, `target`, `hasRole`
+  - temporal/event: `timestamp`, `eventType`
+  - finance: `txnAmountSum`, `txnCount`
+  - provenance/evidence: `isFalseEdge`, `isCopiedEdge`, `copiedFromLayer`, `confidence`
+  - interaction rules: `fromLayer`, `toLayer`, `temporalWindowDays`, `ruleType`, `strength`
+
+### 2) SHACL constraints (`ontology/constraints.shacl.ttl`)
+
+SHACL shapes provide declarative guardrails, for example:
+
+- actor-role cardinality (`ActorRoleShape`)
+- non-negative event timestamp + allowed event type (`EventTimeShape`, `EventTypeShape`)
+- positive transaction amount (`FinanceEdgeAmountShape`)
+- no self-loop hierarchy edges (`HierarchyNoSelfLoopShape`)
+- provenance confidence range [0,1] (`ProvenanceConfidenceShape`)
+
+### 3) Runtime ontology validator (`src/ontology/validator.py`)
+
+Beyond static SHACL terms, runtime checks evaluate manifest semantics directly:
+
+- role whitelist validation
+- hierarchy command-source constraints
+- finance value sanity (`txn_amount_sum > 0`, `txn_count >= 0`)
+- relation-role compatibility by layer
+- provenance validity (`is_false` binary, `confidence` bounds, `copied_from` integrity)
+- temporal interaction ordering/lag checks using `ontology.layer_interactions`
+
+Output includes:
+
+- `conforms` flag
+- `violations`, `violations_by_check`, `violation_histogram`
+- per-check error buckets (`errors_by_check`)
+- run-level counts (nodes/layers/events/violation totals)
+
+---
+
+## 🏗️ Pipeline overview
 
 ```text
-multiplex-terror-network-gnn/
-├── README.md
-├── PLANS.md
-├── PLANS_KOR.md
-├── requirements.txt
-├── requirements.lock
-├── configs/
-│   ├── generator_easy.json
-│   ├── generator_baseline.json
-│   └── generator_hard.json
-├── ontology/
-│   ├── terror.ttl
-│   └── constraints.shacl.ttl
-├── src/
-│   ├── run_all.py
-│   ├── cli/
-│   │   └── validate_ontology.py
-│   ├── ontology/
-│   │   ├── load.py
-│   │   └── validator.py
-│   ├── data/
-│   │   ├── multiplex_generator_v3.py
-│   │   ├── build_pyg_dataset_v3.py
-│   │   └── basic_diagnostics_v3.py
-│   ├── models/
-│   │   ├── train_multitask_gnn_v3.py
-│   │   ├── train_hvt_gnn_v3.py
-│   │   └── train_linkpred_layer_v3.py
-│   ├── analysis/
-│   │   └── plot_multitask_linkpred_summary.py
-│   └── validation/
-│       └── schema.py
-└── tests/
-    └── test_*.py
+Generator(v3) -> Ontology Validator -> PyG Builder(v3) -> GNN Training(v3) -> Reporting/Explanations
 ```
+
+### Ontology modes in `src.run_all`
+
+| Mode | Behavior | Typical Use |
+|---|---|---|
+| `strict` (default) | Validation failure stops run | experiments requiring guaranteed semantic conformance |
+| `constrained` | retries generation with shifted seeds | produce conformant manifests under noisy configs |
+| `report_only` | record violations but continue | exploratory analysis / ablation |
 
 ---
 
-## Installation
+## 📦 Key artifacts per run
 
-### 1) Clone
+- `multiplex.json` (generated manifest)
+- `ontology_validation_report.json`
+- `run_metadata.json` (ontology settings + stage outputs)
+- `pyg_data.pt` (with ontology bridge tensors)
+- `multitask_metrics.json`
+- `reporting_summary/multitask_linkpred_summary.csv` *(optional)*
+- `explanations/ontology_explanations.json` *(optional)*
+
+---
+
+## 🔧 Installation
 
 ```bash
 git clone https://github.com/Navy10021/multiplex-terror-network-gnn.git
 cd multiplex-terror-network-gnn
-```
-
-### 2) Python env (recommended)
-
-```bash
 python -m venv .venv
 source .venv/bin/activate
-```
-
-(or use conda if preferred)
-
-### 3) Install dependencies
-
-```bash
 pip install -r requirements.lock
 ```
 
-If you need custom torch/pyg wheels for your CUDA/OS, use `requirements.txt` and install PyTorch/PyG first.
+> If your CUDA/OS requires custom wheels, install PyTorch/PyG first, then use `requirements.txt`.
 
 ---
 
-## Quick Start
+## 🚀 Quick start recipes
 
 ### A) End-to-end run
 
@@ -204,7 +143,7 @@ python -m src.run_all \
   --out_root results
 ```
 
-### B) End-to-end with Phase E reporting artifacts
+### B) End-to-end + reporting/explanations
 
 ```bash
 python -m src.run_all \
@@ -216,7 +155,7 @@ python -m src.run_all \
   --write_explanations
 ```
 
-### C) Ontology mode presets
+### C) Constrained ontology generation
 
 ```bash
 python -m src.run_all \
@@ -227,20 +166,17 @@ python -m src.run_all \
   --ontology_mode constrained
 ```
 
-### D) Ontology-constrained generation mode (legacy flags)
+### D) Validate existing manifest only
 
 ```bash
-python -m src.run_all \
-  --config configs/generator_baseline.json \
-  --size 800 \
-  --seed 2025 \
-  --out_root results \
-  --ontology_constrained \
-  --ontology_max_retries 3 \
-  --ontology_retry_seed_stride 1
+python -m src.cli.validate_ontology \
+  --manifest data/multiplex_baseline/multiplex.json \
+  --ontology ontology/terror.ttl \
+  --shapes ontology/constraints.shacl.ttl \
+  --json
 ```
 
-### E) Multitask training with ontology loss (Phase D)
+### E) Multitask training with ontology loss
 
 ```bash
 python -m src.models.train_multitask_gnn_v3 \
@@ -255,33 +191,61 @@ python -m src.models.train_multitask_gnn_v3 \
 
 ---
 
-## Ontology-based Terror Network: Current Status
+## 🧪 Validation checklist (recommended)
 
-### ✅ Implemented (current code)
+```bash
+# 1) Unit tests for ontology components
+pytest -q tests/test_ontology_validator.py tests/test_ontology_cli.py tests/test_generator_ontology_integration.py
 
-- **Phase A**: validator depth expansion (rule-level violation objects, check histograms, temporal/relation/provenance checks).
-- **Phase B**: ontology-constrained retry generation with telemetry.
-- **Phase C**: PyG ontology bridge tensors + consistency checks.
-- **Phase D**: ontology-aware multitask regularizers + ablation CLI + metrics logging.
-- **Phase E**: ontology-aware reporting metrics + node-level explanation artifact generation.
+# 2) End-to-end smoke with ontology enabled
+python -m src.run_all --config configs/generator_baseline.json --size 120 --seed 2025 --out_root results
 
-### Key ontology artifacts produced per run
-
-- `ontology_validation_report.json`
-- `run_metadata.json` (including ontology paths/status/telemetry and Phase E artifact paths)
-- `reporting_summary/multitask_linkpred_summary.csv` *(optional via flag)*
-- `explanations/ontology_explanations.json` *(optional via flag)*
-
-### Next-up focus
-
-- richer rule-grounded explanations (model attribution + rule chain alignment),
-- better calibration between model confidence and ontology conflict signals,
-- broader ontology-aware benchmarking across difficulty presets and seeds.
+# 3) Inspect ontology report
+python -m src.cli.validate_ontology --manifest results/<run_dir>/multiplex.json --json
+```
 
 ---
 
-## Plans
+## 🗂️ Project structure
 
-- English roadmap: `PLANS.md`
-- Korean roadmap: `PLANS_KOR.md`
+```text
+multiplex-terror-network-gnn/
+├── README.md
+├── PLANS.md
+├── PLANS_KOR.md
+├── configs/
+├── ontology/
+│   ├── terror.ttl
+│   └── constraints.shacl.ttl
+├── src/
+│   ├── run_all.py
+│   ├── cli/validate_ontology.py
+│   ├── ontology/{load.py,validator.py}
+│   ├── data/{multiplex_generator_v3.py,build_pyg_dataset_v3.py,basic_diagnostics_v3.py}
+│   ├── models/{train_multitask_gnn_v3.py,train_hvt_gnn_v3.py,train_linkpred_layer_v3.py}
+│   └── analysis/plot_multitask_linkpred_summary.py
+└── tests/
+```
 
+---
+
+## 🛣️ Current status & roadmap pointers
+
+### Implemented phases
+
+- **Phase A**: ontology validator depth expansion (rule-level violations + histograms)
+- **Phase B**: constrained generation with retries/telemetry
+- **Phase C**: PyG ontology bridge tensors + consistency checks
+- **Phase D**: ontology-aware multitask regularizers + metrics logging
+- **Phase E**: ontology-aware reporting and explanation artifact generation
+
+### Roadmap docs
+
+- English: `PLANS.md`
+- Korean: `PLANS_KOR.md`
+
+---
+
+## 📄 License / usage note
+
+Use this repository only for legal, ethical, and defensive research contexts.
