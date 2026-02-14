@@ -167,6 +167,8 @@ A run directory generally includes:
 - `run_metadata.json`
 - `explanations/ontology_explanations.json` (when enabled)
 - `reporting_summary/multitask_linkpred_summary.csv` (when enabled)
+- `DATASET_CARD.md`
+- `MODEL_CARD.md`
 
 ---
 

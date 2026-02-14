@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from typing import Dict, Optional, Any, List
+from typing import Any, Dict, List, Optional
 
+from src.analysis.plot_multitask_linkpred_summary import build_runs_dataframe
 from src.data.basic_diagnostics_v3 import (
     activity_observability_diagnostics,
     basic_stats,
@@ -17,13 +18,12 @@ from src.data.basic_diagnostics_v3 import (
     event_burstiness_diagnostics,
     false_edge_observability_diagnostics,
     label_diagnostics,
+    layer_overlap_diagnostics,
     load_multiplex,
     operation_cell_purity,
     print_meta,
-    layer_overlap_diagnostics,
     rolewise_degree_stats,
 )
-from src.analysis.plot_multitask_linkpred_summary import build_runs_dataframe
 from src.data.multiplex_generator_v3 import (
     generate_multiplex_with_config,
     generate_with_ontology_constraints,
@@ -34,12 +34,9 @@ from src.ontology.validator import (
     validate_manifest_dict_with_ontology,
     write_ontology_report,
 )
+from src.reporting.cards import write_run_cards
 from src.utils.exp_logging import build_artifact_dir, collect_run_metadata, write_run_metadata
 from src.validation.schema import Manifest, validate_manifest_dict
-
-
-
-
 
 
 def _safe_int(x: Any, default: int = -1) -> int:
@@ -313,41 +310,6 @@ def _run_diagnostics(manifest_path: str, out_dir: str) -> None:
     label_diagnostics(labels, out_dir=os.path.join(out_dir, "5_labels"))
 
 
-def _write_dataset_card(manifest: Manifest, run_dir: str, dataset_path: Optional[str], diagnostics_dir: Optional[str]) -> str:
-    lines = ["# DATASET_CARD", ""]
-    lines.append(f"- generator: `{manifest.meta.generator}`")
-    lines.append(f"- seed: `{manifest.meta.seed}`")
-    lines.append(f"- num_nodes: `{manifest.meta.num_nodes}`")
-    lines.append("")
-
-    lines.append("## Layer summary")
-    lines.append("| layer | edges | false_rate | copied_rate |")
-    lines.append("| --- | ---: | ---: | ---: |")
-    for lname, layer in manifest.layers.items():
-        total = len(layer.edges)
-        if total == 0:
-            false_rate = 0.0
-            copied_rate = 0.0
-        else:
-            false_rate = sum(1 for e in layer.edges if (e.is_false or 0) != 0) / total
-            copied_rate = sum(1 for e in layer.edges if e.copied_from) / total
-        lines.append(
-            f"| {lname} | {total} | {false_rate:.3f} | {copied_rate:.3f} |"
-        )
-
-    lines.append("")
-    lines.append("## Artifacts")
-    if dataset_path:
-        lines.append(f"- PyG dataset: `{os.path.abspath(dataset_path)}`")
-    if diagnostics_dir:
-        lines.append(f"- Diagnostics: `{os.path.abspath(diagnostics_dir)}`")
-
-    card_path = os.path.join(run_dir, "DATASET_CARD.md")
-    with open(card_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-    return card_path
-
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="End-to-end runner: generate → build → diagnostics")
@@ -486,8 +448,14 @@ def main() -> None:
     meta_path = write_run_metadata(run_dir, metadata)
     print(f"[*] Logged metadata: {meta_path}")
 
-    card_path = _write_dataset_card(manifest_model, run_dir, dataset_path, diagnostics_dir)
-    print(f"[*] Wrote dataset card: {card_path}")
+    cards = write_run_cards(
+        manifest_model,
+        run_dir=run_dir,
+        dataset_path=dataset_path,
+        diagnostics_dir=diagnostics_dir,
+    )
+    print(f"[*] Wrote dataset card: {cards.get('dataset_card')}")
+    print(f"[*] Wrote model card: {cards.get('model_card')}")
 
 
 if __name__ == "__main__":
