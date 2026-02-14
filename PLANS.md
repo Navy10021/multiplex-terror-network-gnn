@@ -12,7 +12,7 @@ This document is a forward engineering plan focused on upgrading this repository
 - [x] **Phase B started**: ontology-constrained generation retries + telemetry wired in generator/run pipeline
 - [x] **Phase C started**: PyG builder ontology bridge tensors/masks + payload consistency checks
 - [x] **Phase D started**: multitask trainer ontology-aware regularizers + ablation flags + metrics wiring
-- [ ] Phase E
+- [x] **Phase E started**: ontology-aware reporting metrics + node explanation artifacts wired into run pipeline
 
 ---
 

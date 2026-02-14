@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from typing import Dict, Optional
+from typing import Dict, Optional, Any, List
 
 from src.data.basic_diagnostics_v3 import (
     activity_observability_diagnostics,
@@ -24,6 +24,7 @@ from src.data.basic_diagnostics_v3 import (
     rolewise_degree_stats,
 )
 from src.data.build_pyg_dataset_v3 import build_pyg_data
+from src.analysis.plot_multitask_linkpred_summary import build_runs_dataframe
 from src.data.multiplex_generator_v3 import (
     generate_multiplex_with_config,
     generate_with_ontology_constraints,
@@ -36,6 +37,93 @@ from src.ontology.validator import (
 )
 from src.utils.exp_logging import build_artifact_dir, collect_run_metadata, write_run_metadata
 from src.validation.schema import Manifest, validate_manifest_dict
+
+
+
+
+def _build_node_explanations(manifest: Dict[str, Any], ontology_report: Dict[str, Any], top_k: int = 25) -> List[Dict[str, Any]]:
+    nodes = manifest.get("nodes", []) if isinstance(manifest.get("nodes"), list) else []
+    layers = manifest.get("layers", {}) if isinstance(manifest.get("layers"), dict) else {}
+    violations = ontology_report.get("violations", []) if isinstance(ontology_report.get("violations"), list) else []
+
+    degree: Dict[int, int] = {}
+    neighbors: Dict[int, set] = {}
+    for layer_obj in layers.values():
+        if not isinstance(layer_obj, dict):
+            continue
+        for e in (layer_obj.get("edges", []) or []):
+            try:
+                u = int(e.get("source"))
+                v = int(e.get("target"))
+            except Exception:
+                continue
+            degree[u] = degree.get(u, 0) + 1
+            degree[v] = degree.get(v, 0) + 1
+            neighbors.setdefault(u, set()).add(v)
+            neighbors.setdefault(v, set()).add(u)
+
+    node_viol: Dict[int, List[Dict[str, Any]]] = {}
+    for v in violations:
+        affected = v.get("affected_ids", []) if isinstance(v, dict) else []
+        if not isinstance(affected, list):
+            continue
+        for aid in affected:
+            try:
+                nid = int(aid)
+            except Exception:
+                continue
+            node_viol.setdefault(nid, []).append({
+                "check": v.get("check"),
+                "rule_id": v.get("rule_id"),
+                "severity": v.get("severity", "error"),
+                "message": v.get("message", ""),
+            })
+
+    ranked = sorted(nodes, key=lambda n: degree.get(int(n.get("id", n.get("node_id", -1))), 0), reverse=True)
+    selected = ranked[:max(1, int(top_k))]
+    out: List[Dict[str, Any]] = []
+    for n in selected:
+        nid = int(n.get("id", n.get("node_id", -1)))
+        neigh = sorted(list(neighbors.get(nid, set())))[:15]
+        nv = node_viol.get(nid, [])
+        out.append({
+            "target": nid,
+            "task": "hvt_risk_screening",
+            "model_evidence": {
+                "proxy_signal": "local_degree",
+                "local_degree": int(degree.get(nid, 0)),
+                "top_neighbors": neigh,
+            },
+            "ontology_evidence": {
+                "conforms_global": bool(ontology_report.get("conforms", False)),
+                "violations_for_target": nv,
+                "violation_count_for_target": len(nv),
+            },
+            "conflict_flags": {
+                "rule_violation_for_target": bool(nv),
+                "global_nonconformance": not bool(ontology_report.get("conforms", False)),
+            },
+        })
+    return out
+
+
+def _write_explanations(run_dir: str, manifest: Dict[str, Any], ontology_report: Dict[str, Any], top_k: int = 25) -> str:
+    out_dir = os.path.join(run_dir, "explanations")
+    os.makedirs(out_dir, exist_ok=True)
+    exps = _build_node_explanations(manifest, ontology_report, top_k=top_k)
+    out_path = os.path.join(out_dir, "ontology_explanations.json")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump({"explanations": exps}, f, indent=2)
+    return out_path
+
+
+def _run_reporting_summary(run_dir: str) -> str:
+    out_dir = os.path.join(run_dir, "reporting_summary")
+    os.makedirs(out_dir, exist_ok=True)
+    df = build_runs_dataframe([run_dir], difficulty_mode="auto")
+    csv_path = os.path.join(out_dir, "multitask_linkpred_summary.csv")
+    df.to_csv(csv_path, index=False)
+    return csv_path
 
 
 def _write_manifest(manifest: Dict, path: str) -> None:
@@ -113,6 +201,9 @@ def main() -> None:
     parser.add_argument("--ontology_constrained", action="store_true", help="Retry generation with shifted seeds until ontology validation conforms")
     parser.add_argument("--ontology_max_retries", type=int, default=3, help="Max generation attempts in ontology_constrained mode")
     parser.add_argument("--ontology_retry_seed_stride", type=int, default=1, help="Seed increment per attempt in ontology_constrained mode")
+    parser.add_argument("--run_reporting_summary", action="store_true", help="Write ontology-aware reporting summary CSV for this run")
+    parser.add_argument("--write_explanations", action="store_true", help="Write node-level ontology explanation artifacts")
+    parser.add_argument("--explanations_top_k", type=int, default=25, help="Number of top-degree nodes to include in explanations")
     args = parser.parse_args()
 
     run_dir = build_artifact_dir(args.out_root, args.config, args.seed, prefix="run")
@@ -177,6 +268,16 @@ def main() -> None:
         _run_diagnostics(manifest_path, diagnostics_dir)
         print(f"[*] Saved diagnostics under: {diagnostics_dir}")
 
+    explanation_path: Optional[str] = None
+    if args.write_explanations:
+        explanation_path = _write_explanations(run_dir, manifest, ontology_report, top_k=args.explanations_top_k)
+        print(f"[*] Wrote ontology explanations: {explanation_path}")
+
+    reporting_summary_csv: Optional[str] = None
+    if args.run_reporting_summary:
+        reporting_summary_csv = _run_reporting_summary(run_dir)
+        print(f"[*] Wrote reporting summary: {reporting_summary_csv}")
+
     metadata = collect_run_metadata(
         out_dir=run_dir,
         config_path=args.config,
@@ -188,6 +289,8 @@ def main() -> None:
             "ontology_report": os.path.abspath(ontology_report_path),
             "ontology_conforms": bool(ontology_report.get("conforms", False)),
             "ontology_generation_telemetry": ontology_telemetry,
+            "ontology_explanations": os.path.abspath(explanation_path) if explanation_path else None,
+            "reporting_summary_csv": os.path.abspath(reporting_summary_csv) if reporting_summary_csv else None,
         },
     )
     meta_path = write_run_metadata(run_dir, metadata)
