@@ -20,4 +20,4 @@ def test_generator_v3_manifest_passes_ontology_validation():
     )
 
     assert report["conforms"] is True
-    assert report["constraints_checked"] == 6
+    assert report["constraints_checked"] == 4

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 from src.ontology.validator import OntologyValidationError, validate_manifest_with_ontology
@@ -15,7 +14,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", required=True, help="Path to manifest JSON")
     parser.add_argument("--ontology", default="ontology/terror.ttl", help="Path to ontology TTL")
     parser.add_argument("--shapes", default="ontology/constraints.shacl.ttl", help="Path to SHACL constraints TTL")
-    parser.add_argument("--json", action="store_true", help="Print full validation report as JSON")
     return parser
 
 
@@ -36,12 +34,8 @@ def main() -> int:
     except OntologyValidationError as exc:
         parser.error(str(exc))
 
-    if args.json:
-        print(json.dumps(report, indent=2))
-    else:
-        print(f"Ontology validation succeeded: {args.manifest}")
-        print(f"Checked constraints: {report['constraints_checked']}")
-        print(f"Counts: nodes={report['counts']['nodes']} layers={report['counts']['layers']} events={report['counts']['events']}")
+    print(f"Ontology validation succeeded: {args.manifest}")
+    print(f"Checked constraints: {report['constraints_checked']}")
     return 0
 
 
