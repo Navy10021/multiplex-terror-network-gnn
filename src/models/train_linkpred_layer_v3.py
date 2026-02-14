@@ -242,18 +242,74 @@ def unique_edges(edge_index: torch.Tensor, *, directed: bool) -> torch.Tensor:
     return torch.tensor(pairs_u, dtype=torch.long).t().contiguous()
 
 
+def unique_edges_with_optional_time(
+    edge_index: torch.Tensor,
+    *,
+    directed: bool,
+    edge_time: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """Deduplicate edges with optional timestamp consolidation (earliest time per unique edge)."""
+    src = edge_index[0].cpu().numpy().astype(np.int64)
+    dst = edge_index[1].cpu().numpy().astype(np.int64)
+    ts = None if edge_time is None else edge_time.view(-1).cpu().numpy().astype(np.float64)
+
+    key_to_time: Dict[Tuple[int, int], float] = {}
+    keys: Set[Tuple[int, int]] = set()
+    for i, (u0, v0) in enumerate(zip(src, dst)):
+        u = int(u0)
+        v = int(v0)
+        if u == v:
+            continue
+        key = (u, v) if directed else ((u, v) if u < v else (v, u))
+        keys.add(key)
+        if ts is not None:
+            t = float(ts[i])
+            prev = key_to_time.get(key)
+            if prev is None or t < prev:
+                key_to_time[key] = t
+
+    pairs_u = np.array(sorted(keys), dtype=np.int64)
+    if pairs_u.size == 0:
+        pairs_u = np.zeros((0, 2), dtype=np.int64)
+
+    edges = torch.tensor(pairs_u, dtype=torch.long).t().contiguous()
+    if ts is None:
+        return edges, None
+
+    out_t = np.array([key_to_time.get((int(u), int(v)), 0.0) for u, v in pairs_u], dtype=np.float32)
+    return edges, torch.tensor(out_t, dtype=torch.float32)
+
+
 def split_edges(
     edge_index: torch.Tensor,
     train_ratio: float,
     val_ratio: float,
     seed: int,
+    *,
+    split_mode: str = "random",
+    edge_time: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     num_edges = int(edge_index.size(1))
-    g = torch.Generator().manual_seed(int(seed))
-    perm = torch.randperm(num_edges, generator=g)
+    if num_edges <= 0:
+        z = torch.zeros((2, 0), dtype=torch.long)
+        return z, z, z
 
     n_train = int(num_edges * float(train_ratio))
     n_val = int(num_edges * float(val_ratio))
+
+    mode = str(split_mode or "random").lower()
+    if mode == "temporal":
+        if edge_time is None or int(edge_time.numel()) != num_edges:
+            raise ValueError("temporal split requires edge_time with one timestamp per edge")
+        t = edge_time.view(-1).cpu().numpy().astype(np.float64)
+        # stable order: time asc, then deterministic random jitter from seed for ties
+        rng = np.random.default_rng(int(seed))
+        jitter = rng.random(num_edges) * 1e-6
+        order = np.argsort(t + jitter, kind="mergesort")
+        perm = torch.tensor(order, dtype=torch.long)
+    else:
+        g = torch.Generator().manual_seed(int(seed))
+        perm = torch.randperm(num_edges, generator=g)
 
     train = edge_index[:, perm[:n_train]]
     val = edge_index[:, perm[n_train:n_train + n_val]]
@@ -314,6 +370,38 @@ def _infer_node_regions(data: Data) -> Optional[np.ndarray]:
     x0 = data.x[:, :region_dim]
     regions = torch.argmax(x0, dim=1).cpu().numpy().astype(np.int64)
     return regions
+
+
+def sample_negative_edges_degree(
+    num_nodes: int,
+    num_samples: int,
+    existing: Set[Tuple[int, int]],
+    *,
+    directed: bool,
+    degree_weights: np.ndarray,
+    seed: int,
+) -> torch.Tensor:
+    """Sample negatives with degree-biased node proposals (harder than uniform)."""
+    rng = np.random.default_rng(int(seed))
+    w = np.asarray(degree_weights, dtype=np.float64).reshape(-1)
+    if w.size != int(num_nodes):
+        raise ValueError(f"degree_weights size mismatch: expected {num_nodes}, got {w.size}")
+    w = np.clip(w, 0.0, None)
+    if float(w.sum()) <= 0.0:
+        w = np.ones(int(num_nodes), dtype=np.float64)
+    p = w / float(w.sum())
+
+    neg: List[Tuple[int, int]] = []
+    while len(neg) < int(num_samples):
+        u = int(rng.choice(num_nodes, p=p))
+        v = int(rng.choice(num_nodes, p=p))
+        if u == v:
+            continue
+        key = (u, v) if directed else (min(u, v), max(u, v))
+        if key in existing:
+            continue
+        neg.append((u, v))
+    return torch.tensor(neg, dtype=torch.long).t().contiguous()
 
 
 def sample_negative_edges_hard_region(
@@ -652,11 +740,13 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=2025)
     p.add_argument("--train_ratio", type=float, default=0.7)
     p.add_argument("--val_ratio", type=float, default=0.15)
+    p.add_argument("--split_mode", type=str, default="random", choices=["random", "temporal"])
     p.add_argument("--patience", type=int, default=50)
     p.add_argument("--min_delta", type=float, default=1e-3)
 
     # negatives
-    p.add_argument("--neg_mode", type=str, default="uniform", choices=["uniform", "hard_region"])
+    p.add_argument("--neg_mode", type=str, default="uniform", choices=["uniform", "hard_region", "degree", "hybrid"])
+    p.add_argument("--neg_hybrid_hard_ratio", type=float, default=0.5, help="Ratio of hard_region negatives in hybrid mode [0,1].")
 
     # feature augmentation
     p.add_argument("--edge_attr_agg", action="store_true", help="Aggregate edge_attr into node features (leakage-safe).")
@@ -704,23 +794,47 @@ def main() -> None:
     # -----------------------------------------------------------------
     mask_rel = (data.edge_type == target_rel)
     pos_raw = data.edge_index[:, mask_rel]
-    pos = unique_edges(pos_raw, directed=directed)
+    pos_time_raw = None
+    if args.split_mode == "temporal":
+        for t_attr in ("edge_time", "edge_timestamp", "edge_ts"):
+            tv = getattr(data, t_attr, None)
+            if tv is not None:
+                pos_time_raw = tv[mask_rel]
+                break
+    pos, pos_time = unique_edges_with_optional_time(pos_raw, directed=directed, edge_time=pos_time_raw)
 
     print(f"[Layer={args.layer}] directed={directed} | raw_pos={int(pos_raw.size(1))} | unique_pos={int(pos.size(1))}")
     if pos.size(1) < 10:
         raise RuntimeError("Too few positive edges for link prediction.")
 
-    train_pos, val_pos, test_pos = split_edges(pos, args.train_ratio, args.val_ratio, args.seed)
+    if args.split_mode == "temporal" and pos_time is None:
+        print("[!] temporal split requested but edge timestamps not found; falling back to random split.")
+        args.split_mode = "random"
+
+    train_pos, val_pos, test_pos = split_edges(
+        pos,
+        args.train_ratio,
+        args.val_ratio,
+        args.seed,
+        split_mode=args.split_mode,
+        edge_time=pos_time,
+    )
 
     # existing edges set (avoid sampling true edges as negatives)
     existing = edge_index_to_set(pos, directed=directed)
 
     num_nodes = int(data.x.size(0))
+    degrees = np.bincount(pos[0].cpu().numpy(), minlength=num_nodes) + np.bincount(pos[1].cpu().numpy(), minlength=num_nodes)
+
     if args.neg_mode == "uniform":
         train_neg = sample_negative_edges_uniform(num_nodes, int(train_pos.size(1)), existing, directed=directed, seed=args.seed + 1)
         val_neg = sample_negative_edges_uniform(num_nodes, int(val_pos.size(1)), existing, directed=directed, seed=args.seed + 2)
         test_neg = sample_negative_edges_uniform(num_nodes, int(test_pos.size(1)), existing, directed=directed, seed=args.seed + 3)
-    else:
+    elif args.neg_mode == "degree":
+        train_neg = sample_negative_edges_degree(num_nodes, int(train_pos.size(1)), existing, directed=directed, degree_weights=degrees, seed=args.seed + 1)
+        val_neg = sample_negative_edges_degree(num_nodes, int(val_pos.size(1)), existing, directed=directed, degree_weights=degrees, seed=args.seed + 2)
+        test_neg = sample_negative_edges_degree(num_nodes, int(test_pos.size(1)), existing, directed=directed, degree_weights=degrees, seed=args.seed + 3)
+    elif args.neg_mode == "hard_region":
         regions = _infer_node_regions(data)
         if regions is None:
             print("[!] hard_region requested but region info not found; falling back to uniform negatives.")
@@ -734,6 +848,28 @@ def main() -> None:
             assert_hard_region_negatives(train_neg, regions)
             assert_hard_region_negatives(val_neg, regions)
             assert_hard_region_negatives(test_neg, regions)
+    else:
+        regions = _infer_node_regions(data)
+        hard_ratio = float(np.clip(args.neg_hybrid_hard_ratio, 0.0, 1.0))
+
+        def _hybrid(num_s: int, seed_off: int) -> torch.Tensor:
+            n_hard = int(round(int(num_s) * hard_ratio))
+            n_deg = int(num_s) - n_hard
+            chunks: List[torch.Tensor] = []
+            if n_hard > 0 and regions is not None:
+                chunks.append(sample_negative_edges_hard_region(num_nodes, n_hard, existing, directed=directed, regions=regions, seed=args.seed + seed_off))
+            if n_deg > 0:
+                chunks.append(sample_negative_edges_degree(num_nodes, n_deg, existing, directed=directed, degree_weights=degrees, seed=args.seed + seed_off + 1000))
+            if not chunks:
+                return torch.zeros((2, 0), dtype=torch.long)
+            out = torch.cat(chunks, dim=1)
+            if regions is not None and n_hard > 0:
+                assert_hard_region_negatives(out[:, :n_hard], regions)
+            return out
+
+        train_neg = _hybrid(int(train_pos.size(1)), 1)
+        val_neg = _hybrid(int(val_pos.size(1)), 2)
+        test_neg = _hybrid(int(test_pos.size(1)), 3)
 
     # -----------------------------------------------------------------
     # Leakage-safe training graph (encoder sees only TRAIN positives for target layer)
@@ -856,6 +992,7 @@ def main() -> None:
         "target_rel": int(target_rel),
         "directed": bool(directed),
         "neg_mode": args.neg_mode,
+        "split_mode": args.split_mode,
         "seed": int(args.seed),
         "hyperparams": {
             "hidden_dim": int(args.hidden_dim),

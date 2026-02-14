@@ -31,7 +31,7 @@ Generator config validation 계층 추가
 
 ---
 
-## STEP11-2 (이번 PR)
+## STEP11-2
 ### 제목
 Ontology rule registry externalization + report schema versioning
 
@@ -43,7 +43,7 @@ Ontology rule registry externalization + report schema versioning
 
 ---
 
-## STEP11-3
+## STEP11-3 (이번 PR)
 ### 제목
 Link prediction protocol v2 (temporal split + advanced negatives)
 
@@ -51,6 +51,19 @@ Link prediction protocol v2 (temporal split + advanced negatives)
 - `src/models/train_linkpred_layer_v3.py`
 - `tests/test_linkpred_protocol_v2.py` (new)
 - `README.md`
+
+### 작업
+- link prediction split protocol에 `split_mode`(random/temporal) 추가
+- temporal split 시 edge timestamp 기반 순차 분할 적용(없으면 random fallback)
+- negative sampling 고도화(`degree`, `hybrid`) 추가
+- protocol v2 유닛 테스트 추가
+
+### 완료 조건
+- temporal split 경로가 테스트로 검증
+- advanced negative sampler가 기본 제약(self-loop/true-edge 회피)을 만족
+
+### 테스트
+- `pytest -q tests/test_linkpred_protocol.py tests/test_linkpred_protocol_v2.py`
 
 ---
 

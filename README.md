@@ -106,7 +106,8 @@ Representative training script:
 
 ### Layer-wise link prediction
 - Leakage-safe protocol by removing validation/test edges from encoder graph
-- Negative sampling modes (e.g., `uniform`, `hard_region`)
+- Protocol v2 split modes: `random` or `temporal` (when edge timestamps are available)
+- Advanced negative sampling modes: `uniform`, `hard_region`, `degree`, `hybrid`
 
 Representative script:
 - `src/models/train_linkpred_layer_v3.py`
