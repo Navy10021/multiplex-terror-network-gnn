@@ -766,6 +766,137 @@ def compute_edge_attr_stats(data: Data, transform: str = "none") -> Tuple[float,
     return mean, std
 
 
+def _edge_role_compat_scores(
+    role_probs: torch.Tensor,
+    edge_index: torch.Tensor,
+    edge_type: torch.Tensor,
+    role_compatibility_mask: Optional[torch.Tensor],
+) -> torch.Tensor:
+    """Compute per-edge role compatibility score in [0, 1]."""
+    if role_compatibility_mask is None:
+        return torch.ones((edge_index.size(1),), device=role_probs.device, dtype=role_probs.dtype)
+
+    src = edge_index[0]
+    dst = edge_index[1]
+    p_src = role_probs[src]  # [E, R]
+    p_dst = role_probs[dst]  # [E, R]
+    mask_e = role_compatibility_mask[edge_type]  # [E, R, R]
+    return torch.einsum("er,err,er->e", p_src, mask_e, p_dst).clamp(0.0, 1.0)
+
+
+def compute_ontology_regularization_losses(
+    role_logits: torch.Tensor,
+    edge_index: torch.Tensor,
+    edge_type: torch.Tensor,
+    edge_ontology_attr: Optional[torch.Tensor],
+    role_compatibility_mask: Optional[torch.Tensor],
+    max_triplets: int = 5000,
+) -> Dict[str, torch.Tensor]:
+    """Compute ontology-guided regularization losses.
+
+    Returns a dict with keys:
+      - role_relation_compatibility
+      - hierarchy_transitivity
+      - temporal_ordering
+    """
+    device = role_logits.device
+    zero = torch.tensor(0.0, device=device)
+
+    if edge_index.numel() == 0:
+        return {
+            "role_relation_compatibility": zero,
+            "hierarchy_transitivity": zero,
+            "temporal_ordering": zero,
+        }
+
+    role_probs = torch.softmax(role_logits, dim=-1)
+
+    role_comp = 1.0 - _edge_role_compat_scores(role_probs, edge_index, edge_type, role_compatibility_mask)
+    loss_role_comp = role_comp.mean() if role_comp.numel() else zero
+
+    if edge_ontology_attr is None or edge_ontology_attr.numel() == 0:
+        return {
+            "role_relation_compatibility": loss_role_comp,
+            "hierarchy_transitivity": zero,
+            "temporal_ordering": zero,
+        }
+
+    # edge_ontology_attr columns:
+    # [is_directed, is_transitive, is_symmetric, is_antisymmetric, time_ordered, max_lag_norm, confidence, copied_flag]
+    trans_mask = edge_ontology_attr[:, 1] > 0.5
+    time_ordered_mask = edge_ontology_attr[:, 4] > 0.5
+
+    # Transitivity consistency: if (a->b) and (b->c) have high compatibility,
+    # then inferred (a->c) compatibility should not be low.
+    trans_edges = trans_mask.nonzero(as_tuple=False).view(-1)
+    if trans_edges.numel() == 0:
+        loss_trans = zero
+    else:
+        eidx = edge_index[:, trans_edges]
+        etype = edge_type[trans_edges]
+        compat = _edge_role_compat_scores(role_probs, eidx, etype, role_compatibility_mask)
+        out_by_src: Dict[int, List[int]] = {}
+        in_by_dst: Dict[int, List[int]] = {}
+        for i in range(eidx.size(1)):
+            u = int(eidx[0, i])
+            v = int(eidx[1, i])
+            out_by_src.setdefault(u, []).append(i)
+            in_by_dst.setdefault(v, []).append(i)
+
+        penalties: List[torch.Tensor] = []
+        for b in set(in_by_dst.keys()).intersection(set(out_by_src.keys())):
+            in_list = in_by_dst[b]
+            out_list = out_by_src[b]
+            for i_in in in_list:
+                a = int(eidx[0, i_in])
+                s_ab = compat[i_in]
+                for i_out in out_list:
+                    c = int(eidx[1, i_out])
+                    if a == c:
+                        continue
+                    s_bc = compat[i_out]
+                    rel = etype[i_out]
+                    if role_compatibility_mask is None:
+                        s_ac = torch.tensor(1.0, device=device)
+                    else:
+                        m = role_compatibility_mask[rel]
+                        s_ac = torch.einsum("r,rs,s->", role_probs[a], m, role_probs[c]).clamp(0.0, 1.0)
+                    penalties.append(F.relu(torch.minimum(s_ab, s_bc) - s_ac))
+                    if len(penalties) >= max_triplets:
+                        break
+                if len(penalties) >= max_triplets:
+                    break
+            if len(penalties) >= max_triplets:
+                break
+        loss_trans = torch.stack(penalties).mean() if penalties else zero
+
+    # Temporal consistency: discourage reciprocal edges on time-ordered relations.
+    time_edges = time_ordered_mask.nonzero(as_tuple=False).view(-1)
+    if time_edges.numel() == 0:
+        loss_temporal = zero
+    else:
+        te = edge_index[:, time_edges]
+        tt = edge_type[time_edges]
+        tcompat = _edge_role_compat_scores(role_probs, te, tt, role_compatibility_mask)
+        pair_to_idx = {(int(te[0, i]), int(te[1, i]), int(tt[i])): i for i in range(te.size(1))}
+        reverse_penalties: List[torch.Tensor] = []
+        for i in range(te.size(1)):
+            u = int(te[0, i])
+            v = int(te[1, i])
+            r = int(tt[i])
+            j = pair_to_idx.get((v, u, r))
+            if j is None or j <= i:
+                continue
+            reverse_penalties.append(tcompat[i] * tcompat[j])
+        loss_temporal = torch.stack(reverse_penalties).mean() if reverse_penalties else zero
+
+    return {
+        "role_relation_compatibility": loss_role_comp,
+        "hierarchy_transitivity": loss_trans,
+        "temporal_ordering": loss_temporal,
+    }
+
+
 # -----------------------------
 # Main
 # -----------------------------
@@ -793,6 +924,18 @@ def main():
 
     parser.add_argument("--include_edge_flags", action="store_true",
                         help="Include edge_is_false/edge_is_copied as additional edge features (requires build_pyg_dataset_v3 with flags).")
+
+    # ontology-aware regularization losses (Phase D)
+    parser.add_argument("--ontology_loss", action="store_true",
+                        help="Enable ontology-aware regularization losses (role-compat/transitivity/temporal).")
+    parser.add_argument("--ontology_loss_role_weight", type=float, default=0.2,
+                        help="Weight for role-relation compatibility regularizer.")
+    parser.add_argument("--ontology_loss_transitivity_weight", type=float, default=0.1,
+                        help="Weight for transitivity consistency regularizer.")
+    parser.add_argument("--ontology_loss_temporal_weight", type=float, default=0.1,
+                        help="Weight for temporal ordering regularizer.")
+    parser.add_argument("--ontology_max_triplets", type=int, default=5000,
+                        help="Maximum sampled transitive triplets for ontology regularization.")
 
     # edge filtering / balancing (helps with extreme relation imbalance)
     parser.add_argument("--drop_relations", type=str, default="", help="Comma-separated relation IDs to drop (applied to train & eval). Example: '4'")
@@ -1009,6 +1152,9 @@ def main():
         "loss_role": [],
         "loss_hvt": [],
         "loss_imp": [],
+        "loss_ontology_role": [],
+        "loss_ontology_transitivity": [],
+        "loss_ontology_temporal": [],
         "val_hvt_auc": [],
         "val_hvt_ap": [],
         "val_hvt_f1_at_05": [],
@@ -1023,6 +1169,8 @@ def main():
     edge_attr = data.edge_attr.to(device) if hasattr(data, "edge_attr") and data.edge_attr is not None else None
     edge_is_false = data.edge_is_false.to(device) if hasattr(data, "edge_is_false") and getattr(data, "edge_is_false") is not None else None
     edge_is_copied = data.edge_is_copied.to(device) if hasattr(data, "edge_is_copied") and getattr(data, "edge_is_copied") is not None else None
+    edge_ontology_attr = data.edge_ontology_attr.to(device) if hasattr(data, "edge_ontology_attr") and getattr(data, "edge_ontology_attr") is not None else None
+    role_compatibility_mask = data.role_compatibility_mask.to(device) if hasattr(data, "role_compatibility_mask") and getattr(data, "role_compatibility_mask") is not None else None
 
     # Precompute per-relation edge indices for optional relation-balanced TRAIN sampling.
     # (Evaluation always uses the full graph.)
@@ -1068,7 +1216,7 @@ def main():
 
         optimizer.zero_grad(set_to_none=True)
 
-        ei, et, ea, ef, ec = edge_index, edge_type, edge_attr, edge_is_false, edge_is_copied
+        ei, et, ea, ef, ec, eo = edge_index, edge_type, edge_attr, edge_is_false, edge_is_copied, edge_ontology_attr
         if rel_edge_indices is not None and edge_balance_target is not None and model.training:
             sampled = []
             for r, idx_r in enumerate(rel_edge_indices):
@@ -1084,6 +1232,7 @@ def main():
             ea = edge_attr[sel] if edge_attr is not None else None
             ef = edge_is_false[sel] if edge_is_false is not None else None
             ec = edge_is_copied[sel] if edge_is_copied is not None else None
+            eo = edge_ontology_attr[sel] if edge_ontology_attr is not None else None
 
         out = model(x, ei, et, edge_attr=ea, edge_is_false=ef, edge_is_copied=ec)
         role_logits = out["role_logits"]
@@ -1110,10 +1259,32 @@ def main():
         imp_norm = (imp - imp_mean) / (imp_std + 1e-8)
         i_loss = imp_crit(imp_pred[train_mask], imp_norm[train_mask])
 
+        ont_losses = {
+            "role_relation_compatibility": torch.tensor(0.0, device=device),
+            "hierarchy_transitivity": torch.tensor(0.0, device=device),
+            "temporal_ordering": torch.tensor(0.0, device=device),
+        }
+        if args.ontology_loss:
+            ont_losses = compute_ontology_regularization_losses(
+                role_logits=role_logits,
+                edge_index=ei,
+                edge_type=et,
+                edge_ontology_attr=eo,
+                role_compatibility_mask=role_compatibility_mask,
+                max_triplets=int(args.ontology_max_triplets),
+            )
+
         if uw is not None:
             total = uw(r_loss, h_loss, i_loss)
         else:
             total = args.alpha_role * r_loss + args.alpha_hvt * h_loss + args.alpha_imp * i_loss
+
+        ontology_total = (
+            float(args.ontology_loss_role_weight) * ont_losses["role_relation_compatibility"]
+            + float(args.ontology_loss_transitivity_weight) * ont_losses["hierarchy_transitivity"]
+            + float(args.ontology_loss_temporal_weight) * ont_losses["temporal_ordering"]
+        )
+        total = total + ontology_total
 
         total.backward()
         if args.grad_clip and args.grad_clip > 0:
@@ -1137,6 +1308,9 @@ def main():
         history["loss_role"].append(float(r_loss.item()))
         history["loss_hvt"].append(float(h_loss.item()))
         history["loss_imp"].append(float(i_loss.item()))
+        history["loss_ontology_role"].append(float(ont_losses["role_relation_compatibility"].item()))
+        history["loss_ontology_transitivity"].append(float(ont_losses["hierarchy_transitivity"].item()))
+        history["loss_ontology_temporal"].append(float(ont_losses["temporal_ordering"].item()))
         history["val_hvt_auc"].append(val_auc)
         history["val_hvt_ap"].append(val_ap)
         history["val_hvt_f1_at_05"].append(val_f1_05)
@@ -1403,6 +1577,20 @@ def main():
             "val": _to_float_dict(best_val_hvt),
             "train": _to_float_dict(train_at_best),
             "test": _to_float_dict(test_at_best),
+        },
+        "ontology_loss": {
+            "enabled": bool(args.ontology_loss),
+            "weights": {
+                "role_relation_compatibility": float(args.ontology_loss_role_weight),
+                "hierarchy_transitivity": float(args.ontology_loss_transitivity_weight),
+                "temporal_ordering": float(args.ontology_loss_temporal_weight),
+            },
+            "max_triplets": int(args.ontology_max_triplets),
+            "final_epoch_losses": {
+                "role_relation_compatibility": float(history["loss_ontology_role"][-1]) if history["loss_ontology_role"] else 0.0,
+                "hierarchy_transitivity": float(history["loss_ontology_transitivity"][-1]) if history["loss_ontology_transitivity"] else 0.0,
+                "temporal_ordering": float(history["loss_ontology_temporal"][-1]) if history["loss_ontology_temporal"] else 0.0,
+            },
         },
     }
 

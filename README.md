@@ -82,6 +82,7 @@ Produces a single `torch_geometric.data.Data` object containing:
   - `x`, `edge_index`, `edge_type`
   - `edge_attr` *(optional, if built/used)*
   - Optional provenance flags (if present in manifest): `edge_is_false`, `edge_is_copied`
+  - Ontology bridge tensors: `edge_ontology_attr`, `node_ontology_features`, `role_compatibility_mask`
 - **Labels**
   - `y_role` (multi-class)
   - `y_hvt` (binary)
@@ -95,6 +96,7 @@ Produces a single `torch_geometric.data.Data` object containing:
 ### 3) Model Zoo (v3)
 - **Multi-task node model**: shared encoder + task heads (**role**, **HVT**, **importance**)
   - Implemented in `train_multitask_gnn_v3.py` (R-GCN / Transformer-style encoder options depending on flags)
+  - Phase D: optional ontology-aware regularization (`--ontology_loss`) with weights for role-compatibility/transitivity/temporal constraints
 - **Single-task HVT baseline**: `train_hvt_gnn_v3.py`
 - **Layer-wise link prediction**: `train_linkpred_layer_v3.py`
   - Negative sampling modes:
@@ -211,6 +213,42 @@ To validate an existing manifest on its own (e.g., after editing or before shari
 ```bash
 python -m src.validation.schema data/multiplex_baseline/multiplex.json --summary
 ```
+
+For ontology-backed rule validation (role/relation and temporal checks), run:
+
+```bash
+python -m src.cli.validate_ontology \
+  --manifest data/multiplex_baseline/multiplex.json \
+  --ontology ontology/terror.ttl \
+  --shapes ontology/constraints.shacl.ttl
+```
+
+Optional JSON report:
+
+```bash
+python -m src.cli.validate_ontology \
+  --manifest data/multiplex_baseline/multiplex.json \
+  --json
+```
+
+`src/data/multiplex_generator_v3.py` and `src/run_all.py` also run ontology checks and write `ontology_validation_report.json` by default. Use `--no_ontology_strict` to keep running while recording violations. For retry-based constrained generation (Phase B), enable `--ontology_constrained` with `--ontology_max_retries` and `--ontology_retry_seed_stride`.
+
+Phase E reporting hooks: `src/run_all.py` supports `--run_reporting_summary` (writes `reporting_summary/multitask_linkpred_summary.csv` with ontology columns) and `--write_explanations` (writes `explanations/ontology_explanations.json` for node-level rule evidence).
+
+## 🧭 Ontology-based Terror Network: Current Status & Next Focus
+
+### What is already reflected
+- OWL/SHACL ontology assets are included (`ontology/terror.ttl`, `ontology/constraints.shacl.ttl`).
+- Manifest-level ontology validation is available via `python -m src.cli.validate_ontology`.
+- Generator/runner flows write `ontology_validation_report.json` so conformance is tracked as an artifact.
+
+### What to evolve next (research-focused)
+- **Generation**: move from post-hoc validation to ontology-constrained sampling with repair telemetry.
+- **Builder (PyG)**: expose ontology-derived masks/tensors (role-pair constraint masks, temporal violation candidates).
+- **Model Zoo**: add ontology-aware losses (role–relation compatibility, transitivity, temporal consistency).
+- **Reporting**: add ontology compliance/violation metrics and rule-grounded explanation outputs per node.
+
+Detailed forward plans are maintained in `PLANS.md` (EN) and `PLANS_KOR.md` (KO), focused on next-stage ontology-driven code evolution.
 
 This exits non-zero on any schema error and prints node/edge/layer/event counts when `--summary` is provided.
 
