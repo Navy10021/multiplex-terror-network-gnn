@@ -202,6 +202,8 @@ This order minimizes regression risk and enables measurable gains at each step.
 
 ## 6) Next evolution proposals (post-Phase E)
 
+- [x] **F1 completed**: ontology_mode presets + strict-failure top-check summaries + actionable guidance
+
 ### F1 — Ontology-conformance friendly defaults & UX hardening
 
 **Why now**

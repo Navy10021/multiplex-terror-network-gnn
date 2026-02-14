@@ -73,10 +73,15 @@ python -m src.cli.validate_ontology --manifest data/multiplex_baseline/multiplex
 
 - `src/data/multiplex_generator_v3.py` supports ontology validation and constrained retries.
 - `src/run_all.py` writes `ontology_validation_report.json` and telemetry by default.
-- Constrained generation options:
+- Ontology mode presets in runner:
+  - `--ontology_mode strict` (default)
+  - `--ontology_mode constrained`
+  - `--ontology_mode report_only`
+- Fine-grained legacy flags (backward compatible):
   - `--ontology_constrained`
   - `--ontology_max_retries`
   - `--ontology_retry_seed_stride`
+  - `--no_ontology_strict`
 
 ### 3) PyG builder ontology bridge (Phase C)
 
@@ -209,7 +214,18 @@ python -m src.run_all \
   --write_explanations
 ```
 
-### C) Ontology-constrained generation mode
+### C) Ontology mode presets
+
+```bash
+python -m src.run_all \
+  --config configs/generator_baseline.json \
+  --size 800 \
+  --seed 2025 \
+  --out_root results \
+  --ontology_mode constrained
+```
+
+### D) Ontology-constrained generation mode (legacy flags)
 
 ```bash
 python -m src.run_all \
@@ -222,7 +238,7 @@ python -m src.run_all \
   --ontology_retry_seed_stride 1
 ```
 
-### D) Multitask training with ontology loss (Phase D)
+### E) Multitask training with ontology loss (Phase D)
 
 ```bash
 python -m src.models.train_multitask_gnn_v3 \

@@ -126,6 +126,53 @@ def _run_reporting_summary(run_dir: str) -> str:
     return csv_path
 
 
+
+
+def _summarize_ontology_violations(ontology_report: Dict[str, Any], top_k: int = 3) -> str:
+    by_check_raw = ontology_report.get("violations_by_check") if isinstance(ontology_report.get("violations_by_check"), dict) else {}
+    if not by_check_raw:
+        errs = ontology_report.get("errors_by_check") if isinstance(ontology_report.get("errors_by_check"), dict) else {}
+        by_check_raw = errs
+
+    by_check: Dict[str, int] = {}
+    for k, v in by_check_raw.items():
+        if isinstance(v, list):
+            by_check[str(k)] = len(v)
+        else:
+            try:
+                by_check[str(k)] = int(v)
+            except Exception:
+                by_check[str(k)] = 0
+
+    if not by_check:
+        total = int(ontology_report.get("violations_total", 0) or 0)
+        return f"violations_total={total}" if total > 0 else "no structured violations"
+
+    ranked = sorted(by_check.items(), key=lambda kv: int(kv[1]), reverse=True)
+    head = ranked[:max(1, int(top_k))]
+    parts = [f"{k}:{int(v)}" for k, v in head]
+    total = int(sum(int(v) for _, v in ranked))
+    return f"top_checks=({', '.join(parts)}) total={total}"
+
+
+def _resolve_ontology_mode(args: argparse.Namespace) -> tuple[bool, bool]:
+    """Return (strict_enabled, constrained_generation_enabled) with preset-aware fallback."""
+    # Backward compatibility: explicit legacy flags take precedence.
+    if args.no_ontology_strict or args.ontology_constrained:
+        strict = not bool(args.no_ontology_strict)
+        constrained = bool(args.ontology_constrained)
+        return strict, constrained
+
+    mode = str(args.ontology_mode)
+    if mode == "strict":
+        return True, False
+    if mode == "constrained":
+        return True, True
+    if mode == "report_only":
+        return False, False
+    return True, False
+
+
 def _write_manifest(manifest: Dict, path: str) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
@@ -198,6 +245,8 @@ def main() -> None:
     parser.add_argument("--ontology", type=str, default="ontology/terror.ttl", help="Ontology TTL path")
     parser.add_argument("--shapes", type=str, default="ontology/constraints.shacl.ttl", help="SHACL constraints path")
     parser.add_argument("--no_ontology_strict", action="store_true", help="Do not fail run on ontology-rule violations")
+    parser.add_argument("--ontology_mode", type=str, default="strict", choices=["strict", "constrained", "report_only"],
+                        help="Ontology run preset: strict (default), constrained (retry-to-conform), report_only (non-strict validation). Legacy flags still supported and override this preset.")
     parser.add_argument("--ontology_constrained", action="store_true", help="Retry generation with shifted seeds until ontology validation conforms")
     parser.add_argument("--ontology_max_retries", type=int, default=3, help="Max generation attempts in ontology_constrained mode")
     parser.add_argument("--ontology_retry_seed_stride", type=int, default=1, help="Seed increment per attempt in ontology_constrained mode")
@@ -206,14 +255,16 @@ def main() -> None:
     parser.add_argument("--explanations_top_k", type=int, default=25, help="Number of top-degree nodes to include in explanations")
     args = parser.parse_args()
 
+    strict_mode, constrained_mode = _resolve_ontology_mode(args)
+
     run_dir = build_artifact_dir(args.out_root, args.config, args.seed, prefix="run")
     os.makedirs(run_dir, exist_ok=True)
     print(f"[*] Run directory: {run_dir}")
 
     cfg = load_generator_config(args.config, size=args.size, seed=args.seed)
 
-    ontology_telemetry = {"mode": "single_pass", "attempts": 1, "failed_attempts": 0}
-    if args.ontology_constrained:
+    ontology_telemetry = {"mode": "constrained" if constrained_mode else "single_pass", "attempts": 1, "failed_attempts": 0}
+    if constrained_mode:
         manifest, ontology_report, ontology_telemetry = generate_with_ontology_constraints(
             cfg=cfg,
             ontology_path=args.ontology,
@@ -225,7 +276,7 @@ def main() -> None:
             print(f"[*] Ontology-constrained generation passed at attempt {ontology_telemetry.get('successful_attempt')}")
         else:
             msg = "ontology-constrained generation exhausted retries without conformance"
-            if not args.no_ontology_strict:
+            if strict_mode:
                 raise OntologyValidationError(msg)
             print(f"[!] Ontology validation warning (strict disabled): {msg}")
     else:
@@ -238,10 +289,12 @@ def main() -> None:
         )
         if ontology_report.get("conforms", False):
             print("[*] Ontology validation passed")
-        elif not args.no_ontology_strict:
-            raise OntologyValidationError("ontology validation failed: " + "; ".join(ontology_report.get("errors", [])) + " | hint: use --no_ontology_strict to continue with reports only, or --ontology_constrained to retry generation")
+        elif strict_mode:
+            summary = _summarize_ontology_violations(ontology_report)
+            raise OntologyValidationError("ontology validation failed: " + "; ".join(ontology_report.get("errors", [])) + " | " + summary + " | hint: use --ontology_mode report_only (or --no_ontology_strict) to continue with reports only, or --ontology_mode constrained (or --ontology_constrained) to retry generation")
         else:
-            print("[!] Ontology validation warning (strict disabled)")
+            summary = _summarize_ontology_violations(ontology_report)
+            print(f"[!] Ontology validation warning (strict disabled): {summary}")
 
     ontology_report["generation_telemetry"] = ontology_telemetry
     manifest_model = validate_manifest_dict(manifest)
@@ -289,6 +342,8 @@ def main() -> None:
             "ontology_report": os.path.abspath(ontology_report_path),
             "ontology_conforms": bool(ontology_report.get("conforms", False)),
             "ontology_generation_telemetry": ontology_telemetry,
+            "ontology_mode_resolved": "constrained" if constrained_mode else ("strict" if strict_mode else "report_only"),
+            "ontology_strict_mode": bool(strict_mode),
             "ontology_explanations": os.path.abspath(explanation_path) if explanation_path else None,
             "reporting_summary_csv": os.path.abspath(reporting_summary_csv) if reporting_summary_csv else None,
         },
