@@ -284,6 +284,130 @@ def _infer_copied_flag(row: Optional[pd.Series]) -> int:
     return 0
 
 
+def _ontology_relation_spec(mani: dict, layer_name: str) -> Dict[str, Any]:
+    onto = mani.get("ontology", {}) if isinstance(mani.get("ontology"), dict) else {}
+    rels = onto.get("relations", {}) if isinstance(onto.get("relations"), dict) else {}
+    spec = rels.get(layer_name, {}) if isinstance(rels.get(layer_name), dict) else {}
+    return spec
+
+
+def _layer_semantic_vector(mani: dict, layer_name: str, directed: bool, row: Optional[pd.Series]) -> List[float]:
+    """Per-edge ontology semantic vector.
+
+    Order:
+      [is_directed, is_transitive, is_symmetric, is_antisymmetric, time_ordered, max_lag_norm, confidence, copied_flag]
+    """
+    spec = _ontology_relation_spec(mani, layer_name)
+    logical = spec.get("logical_props", {}) if isinstance(spec.get("logical_props"), dict) else {}
+    temporal = spec.get("temporal_props", {}) if isinstance(spec.get("temporal_props"), dict) else {}
+
+    def _b(v: Any) -> float:
+        return 1.0 if bool(v) else 0.0
+
+    max_lag = temporal.get("max_lag_days", None)
+    try:
+        max_lag_norm = min(1.0, float(max_lag) / 365.0) if max_lag is not None else 0.0
+    except Exception:
+        max_lag_norm = 0.0
+
+    conf = 1.0
+    if row is not None and "confidence" in row.index:
+        try:
+            conf = float(row.get("confidence"))
+        except Exception:
+            conf = 1.0
+    conf = float(np.clip(conf, 0.0, 1.0))
+
+    copied = float(_infer_copied_flag(row)) if row is not None else 0.0
+
+    return [
+        _b(directed),
+        _b(logical.get("transitive", False)),
+        _b(logical.get("symmetric", False)),
+        _b(logical.get("antisymmetric", False)),
+        _b(temporal.get("time_ordered", False)),
+        float(max_lag_norm),
+        float(conf),
+        float(copied),
+    ]
+
+
+def _node_ontology_role_features(df: pd.DataFrame, mani: dict) -> Tuple[np.ndarray, List[str]]:
+    onto = mani.get("ontology", {}) if isinstance(mani.get("ontology"), dict) else {}
+    roles_obj = onto.get("roles", {}) if isinstance(onto.get("roles"), dict) else {}
+    allowed = roles_obj.get("allowed_roles", []) if isinstance(roles_obj.get("allowed_roles"), list) else []
+    role_names = [str(r) for r in allowed]
+    if not role_names:
+        return np.zeros((len(df), 0), dtype=np.float32), []
+
+    role_to_idx = {r: i for i, r in enumerate(role_names)}
+    out = np.zeros((len(df), len(role_names)), dtype=np.float32)
+    for i, role in enumerate(df["role"].astype(str).tolist()):
+        j = role_to_idx.get(role)
+        if j is not None:
+            out[i, j] = 1.0
+    return out, role_names
+
+
+def _ontology_role_vocab(df: pd.DataFrame, mani: dict) -> List[str]:
+    onto = mani.get("ontology", {}) if isinstance(mani.get("ontology"), dict) else {}
+    roles_obj = onto.get("roles", {}) if isinstance(onto.get("roles"), dict) else {}
+    allowed = roles_obj.get("allowed_roles", []) if isinstance(roles_obj.get("allowed_roles"), list) else []
+    if allowed:
+        vocab = [str(x) for x in allowed]
+    else:
+        vocab = sorted(df["role"].astype(str).unique().tolist())
+
+    observed = set(df["role"].astype(str).tolist())
+    missing = sorted(list(observed.difference(set(vocab))))
+    if missing:
+        raise ValueError(f"ontology role vocabulary missing observed roles: {missing}")
+    return vocab
+
+
+def _build_role_compatibility_mask(mani: dict, layer_type_map: Dict[str, int], role_vocab: List[str]) -> torch.Tensor:
+    rel_count = len(layer_type_map)
+    r = len(role_vocab)
+    mask = torch.ones((rel_count, r, r), dtype=torch.float32)
+    role_to_idx = {name: i for i, name in enumerate(role_vocab)}
+
+    for layer_name, rel_id in layer_type_map.items():
+        spec = _ontology_relation_spec(mani, layer_name)
+        domain = spec.get("domain_roles") if isinstance(spec.get("domain_roles"), list) else None
+        rng = spec.get("range_roles") if isinstance(spec.get("range_roles"), list) else None
+        if not domain or not rng:
+            continue
+
+        layer_mask = torch.zeros((r, r), dtype=torch.float32)
+        for s in domain:
+            for t in rng:
+                si = role_to_idx.get(str(s))
+                ti = role_to_idx.get(str(t))
+                if si is not None and ti is not None:
+                    layer_mask[si, ti] = 1.0
+        if torch.any(layer_mask > 0):
+            mask[rel_id] = layer_mask
+
+    return mask
+
+
+def _assert_ontology_payload_consistency(df: pd.DataFrame, mani: dict) -> None:
+    onto = mani.get("ontology", {}) if isinstance(mani.get("ontology"), dict) else None
+    if not isinstance(onto, dict):
+        return
+
+    roles_obj = onto.get("roles", {}) if isinstance(onto.get("roles"), dict) else {}
+    counts_obj = roles_obj.get("counts", {}) if isinstance(roles_obj.get("counts"), dict) else {}
+    if counts_obj:
+        observed = df["role"].astype(str).value_counts().to_dict()
+        for role, cnt in observed.items():
+            got = counts_obj.get(role)
+            if got is None:
+                raise ValueError(f"ontology.roles.counts missing role '{role}'")
+            if int(got) != int(cnt):
+                raise ValueError(f"ontology.roles.counts mismatch for role '{role}': expected={cnt}, got={got}")
+
+
 # -----------------------------
 # Main conversion
 # -----------------------------
@@ -354,6 +478,7 @@ def build_pyg_data(
     edge_attr_vals: List[float] = []
     edge_false_list: List[int] = []
     edge_copied_list: List[int] = []
+    edge_ontology_attr_vals: List[List[float]] = []
 
     def _edge_weight(layer_name: str, u: int, v: int, row: Optional[pd.Series], directed: bool) -> float:
         """Return a single scalar edge weight."""
@@ -406,7 +531,7 @@ def build_pyg_data(
 
         return 0.0
 
-    def _add_edge(u_id: int, v_id: int, ltype: int, w: float, is_false: int, is_copied: int):
+    def _add_edge(u_id: int, v_id: int, ltype: int, w: float, is_false: int, is_copied: int, ontology_vec: List[float]):
         if u_id not in node2idx or v_id not in node2idx:
             return
         ui = node2idx[u_id]
@@ -417,6 +542,7 @@ def build_pyg_data(
         edge_attr_vals.append(float(w))
         edge_false_list.append(int(is_false))
         edge_copied_list.append(int(is_copied))
+        edge_ontology_attr_vals.append([float(x) for x in ontology_vec])
 
     # deterministic layer order
     layer_order = ["hierarchy", "finance", "communication", "operation", "ideology"]
@@ -432,6 +558,7 @@ def build_pyg_data(
         directed = _layer_directed_flag(mani, lname)
         ltype = layer_type_map[lname]
 
+        ontology_vec_layer = _layer_semantic_vector(mani, lname, directed=directed, row=None)
         for _, row in df_layer.iterrows():
             u = int(row["source"])
             v = int(row["target"])
@@ -449,16 +576,17 @@ def build_pyg_data(
             is_false = _get_int_flag(row, ["edge_is_false", "is_false"], default=0)
             is_copied = _infer_copied_flag(row)
 
-            _add_edge(u, v, ltype, w, is_false=is_false, is_copied=is_copied)
+            _add_edge(u, v, ltype, w, is_false=is_false, is_copied=is_copied, ontology_vec=_layer_semantic_vector(mani, lname, directed=directed, row=row) if row is not None else ontology_vec_layer)
 
             if symmetrize_undirected and not directed:
-                _add_edge(v, u, ltype, w, is_false=is_false, is_copied=is_copied)
+                _add_edge(v, u, ltype, w, is_false=is_false, is_copied=is_copied, ontology_vec=_layer_semantic_vector(mani, lname, directed=directed, row=row) if row is not None else ontology_vec_layer)
 
     edge_index = torch.tensor([edge_src, edge_dst], dtype=torch.long)
     edge_type = torch.tensor(edge_type_list, dtype=torch.long)
     edge_attr = torch.tensor(edge_attr_vals, dtype=torch.float32).view(-1, 1)
     edge_is_false = torch.tensor(edge_false_list, dtype=torch.float32)
     edge_is_copied = torch.tensor(edge_copied_list, dtype=torch.float32)
+    edge_ontology_attr = torch.tensor(edge_ontology_attr_vals, dtype=torch.float32) if edge_ontology_attr_vals else torch.zeros((0, 8), dtype=torch.float32)
 
     # 4) deterministic node split
     if split_seed is None:
@@ -521,6 +649,7 @@ def build_pyg_data(
     # attach edge flag tensors
     data.edge_is_false = edge_is_false
     data.edge_is_copied = edge_is_copied
+    data.edge_ontology_attr = edge_ontology_attr
 
     data.node_id = node_ids
     data.role_mapping = role_map
@@ -531,6 +660,15 @@ def build_pyg_data(
     data.importance_score = torch.from_numpy(imp_np)
     data.imp_mean = float(imp_mean)
     data.imp_std = float(imp_std)
+
+    _assert_ontology_payload_consistency(df, mani)
+    role_vocab = _ontology_role_vocab(df, mani)
+    data.role_compatibility_mask = _build_role_compatibility_mask(mani, layer_type_map, role_vocab)
+    data.role_compatibility_roles = role_vocab
+
+    node_onto_feat, node_onto_roles = _node_ontology_role_features(df, mani)
+    data.node_ontology_features = torch.from_numpy(node_onto_feat)
+    data.node_ontology_roles = node_onto_roles
 
     data.generator_meta = mani.get("meta", {}) or {}
     meta = data.generator_meta if isinstance(data.generator_meta, dict) else {}
@@ -577,6 +715,12 @@ def main():
     print("    edge_attr.shape:", tuple(data.edge_attr.shape))
     print("    edge_is_false.shape:", tuple(data.edge_is_false.shape))
     print("    edge_is_copied.shape:", tuple(data.edge_is_copied.shape))
+    if hasattr(data, "edge_ontology_attr"):
+        print("    edge_ontology_attr.shape:", tuple(data.edge_ontology_attr.shape))
+    if hasattr(data, "node_ontology_features"):
+        print("    node_ontology_features.shape:", tuple(data.node_ontology_features.shape))
+    if hasattr(data, "role_compatibility_mask"):
+        print("    role_compatibility_mask.shape:", tuple(data.role_compatibility_mask.shape))
 
 
 if __name__ == "__main__":
