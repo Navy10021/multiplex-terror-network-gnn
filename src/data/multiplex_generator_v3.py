@@ -1,12 +1,17 @@
 import argparse
 import json
 import os
-from dataclasses import dataclass, asdict, fields
+from dataclasses import dataclass, asdict, fields, replace
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import random
 
+from src.ontology.validator import (
+    OntologyValidationError,
+    validate_manifest_dict_with_ontology,
+    write_ontology_report,
+)
 from src.utils.exp_logging import build_artifact_dir, collect_run_metadata, write_run_metadata
 from src.validation.schema import validate_manifest_dict
 
@@ -1476,6 +1481,75 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
 
 
 
+def generate_with_ontology_constraints(
+    cfg: GeneratorConfig,
+    ontology_path: str,
+    shapes_path: str,
+    max_retries: int = 3,
+    retry_seed_stride: int = 1,
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    """Generate manifests with ontology-aware retries.
+
+    Returns (manifest, ontology_report, telemetry).
+    The returned report is the report from the final attempt (conformant if successful).
+    """
+    attempts = max(1, int(max_retries))
+    stride = max(1, int(retry_seed_stride))
+
+    telemetry: Dict[str, Any] = {
+        "mode": "ontology_constrained",
+        "max_retries": attempts,
+        "attempts": 0,
+        "failed_attempts": 0,
+        "successful_attempt": None,
+        "seed_attempts": [],
+        "violation_histogram": {},
+        "attempt_summaries": [],
+    }
+
+    last_manifest: Dict[str, Any] | None = None
+    last_report: Dict[str, Any] | None = None
+
+    for attempt in range(attempts):
+        seed_i = int(cfg.seed) + attempt * stride
+        cfg_i = replace(cfg, seed=seed_i)
+        manifest = generate_multiplex_with_config(cfg_i)
+        report = validate_manifest_dict_with_ontology(
+            manifest_dict=manifest,
+            ontology_path=ontology_path,
+            shapes_path=shapes_path,
+            strict=False,
+        )
+
+        telemetry["attempts"] = int(telemetry["attempts"] + 1)
+        telemetry["seed_attempts"].append(seed_i)
+        telemetry["attempt_summaries"].append(
+            {
+                "attempt": attempt + 1,
+                "seed": seed_i,
+                "conforms": bool(report.get("conforms", False)),
+                "violations_error": int((report.get("counts") or {}).get("violations_error", len(report.get("errors", [])))),
+            }
+        )
+
+        for k, v in (report.get("violation_histogram") or {}).items():
+            telemetry["violation_histogram"][str(k)] = int(telemetry["violation_histogram"].get(str(k), 0) + int(v))
+
+        last_manifest = manifest
+        last_report = report
+
+        if bool(report.get("conforms", False)):
+            telemetry["successful_attempt"] = attempt + 1
+            return manifest, report, telemetry
+
+        telemetry["failed_attempts"] = int(telemetry["failed_attempts"] + 1)
+
+    assert last_manifest is not None and last_report is not None
+    return last_manifest, last_report, telemetry
+
+
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Structured Multiplex Terrorist Network Generator v3")
     parser.add_argument("--size", type=int, default=1500, help="number of nodes")
@@ -1489,6 +1563,12 @@ def main() -> None:
     parser.add_argument("--run_prefix", type=str, default="run", help="Prefix for auto-named run directories")
     parser.add_argument("--seed", type=int, default=2025, help="random seed")
     parser.add_argument("--config", type=str, default=None, help="JSON config file for generator (optional)")
+    parser.add_argument("--ontology", type=str, default="ontology/terror.ttl", help="Ontology TTL path")
+    parser.add_argument("--shapes", type=str, default="ontology/constraints.shacl.ttl", help="SHACL constraints path")
+    parser.add_argument("--no_ontology_strict", action="store_true", help="Do not fail generation on ontology-rule violations")
+    parser.add_argument("--ontology_constrained", action="store_true", help="Retry generation with shifted seeds until ontology validation conforms")
+    parser.add_argument("--ontology_max_retries", type=int, default=3, help="Max generation attempts in ontology_constrained mode")
+    parser.add_argument("--ontology_retry_seed_stride", type=int, default=1, help="Seed increment per attempt in ontology_constrained mode")
 
     args = parser.parse_args()
 
@@ -1502,7 +1582,39 @@ def main() -> None:
     os.makedirs(out_dir, exist_ok=True)
 
     cfg = load_generator_config(args.config, size=args.size, seed=args.seed)
-    manifest = generate_multiplex_with_config(cfg)
+
+    ontology_telemetry = {"mode": "single_pass", "attempts": 1, "failed_attempts": 0}
+    if args.ontology_constrained:
+        manifest, ontology_report, ontology_telemetry = generate_with_ontology_constraints(
+            cfg=cfg,
+            ontology_path=args.ontology,
+            shapes_path=args.shapes,
+            max_retries=args.ontology_max_retries,
+            retry_seed_stride=args.ontology_retry_seed_stride,
+        )
+        if ontology_report.get("conforms", False):
+            print(f"[*] Ontology-constrained generation passed at attempt {ontology_telemetry.get('successful_attempt')}")
+        else:
+            msg = "ontology-constrained generation exhausted retries without conformance"
+            if not args.no_ontology_strict:
+                raise OntologyValidationError(msg)
+            print(f"[!] Ontology validation warning (strict disabled): {msg}")
+    else:
+        manifest = generate_multiplex_with_config(cfg)
+        ontology_report = validate_manifest_dict_with_ontology(
+            manifest_dict=manifest,
+            ontology_path=args.ontology,
+            shapes_path=args.shapes,
+            strict=False,
+        )
+        if ontology_report.get("conforms", False):
+            print("[*] Ontology validation passed")
+        elif not args.no_ontology_strict:
+            raise OntologyValidationError("ontology validation failed: " + "; ".join(ontology_report.get("errors", [])))
+        else:
+            print("[!] Ontology validation warning (strict disabled)")
+
+    ontology_report["generation_telemetry"] = ontology_telemetry
     manifest_model = validate_manifest_dict(manifest)
 
     out_path = os.path.join(out_dir, "multiplex.json")
@@ -1510,6 +1622,10 @@ def main() -> None:
         json.dump(manifest, f, indent=2)
 
     print(f"[*] Saved multiplex manifest to: {out_path}")
+
+    ontology_report_path = os.path.join(out_dir, "ontology_validation_report.json")
+    write_ontology_report(ontology_report, ontology_report_path)
+    print(f"[*] Saved ontology report to: {ontology_report_path}")
 
     metadata = collect_run_metadata(
         out_dir=out_dir,
@@ -1519,6 +1635,8 @@ def main() -> None:
             "manifest_path": os.path.abspath(out_path),
             "validated": True,
             "generator": manifest_model.meta.generator,
+            "ontology_validation": ontology_report,
+            "ontology_generation_telemetry": ontology_telemetry,
         },
     )
     meta_path = write_run_metadata(out_dir, metadata)

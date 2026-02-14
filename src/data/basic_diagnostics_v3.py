@@ -773,7 +773,7 @@ def copy_provenance_diagnostics(mani: Dict[str, Any], layers: Dict[str, pd.DataF
     print("[copy] summary saved:", os.path.join(out_dir, "copy_provenance_summary.csv"))
 
 
-def observability_false_edge_bias(labels: pd.DataFrame, layers: Dict[str, pd.DataFrame], out_dir: str) -> None:
+def false_edge_observability_diagnostics(labels: pd.DataFrame, layers: Dict[str, pd.DataFrame], out_dir: str) -> None:
     """If observation bias is enabled, false edges should skew toward high-observability endpoints.
 
     This checks whether edges with is_false=1 have higher mean endpoint observability than is_false=0.
@@ -828,6 +828,11 @@ def observability_false_edge_bias(labels: pd.DataFrame, layers: Dict[str, pd.Dat
         print("[obs_bias] summary saved:", os.path.join(out_dir, "observability_false_edge_bias.csv"))
     else:
         print("No layers with is_false found; skipping observability false-edge bias diagnostics.")
+
+
+# Backward-compatible alias
+def observability_false_edge_bias(labels: pd.DataFrame, layers: Dict[str, pd.DataFrame], out_dir: str) -> None:
+    false_edge_observability_diagnostics(labels, layers, out_dir)
 
 
 # -------------------------------------
