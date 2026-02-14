@@ -185,3 +185,4 @@ python -m src.cli.validate_ontology --help
 - English: `PLANS.md`
 - 한국어: `PLANS_KOR.md`
 
+Use this repository only for legal, ethical, and defensive research contexts.
