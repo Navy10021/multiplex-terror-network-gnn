@@ -30,11 +30,5 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      - name: Ruff
-        run: ruff check src
-
-      - name: Mypy
-        run: mypy src/ontology src/validation src/cli src/utils
-
-      - name: Pytest
-        run: pytest -q
+      - name: CI checklist
+        run: bash scripts/ci_checklist.sh

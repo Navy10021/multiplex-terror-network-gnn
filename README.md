@@ -270,6 +270,8 @@ Contributions are welcome for:
 
 Please open an issue/PR with clear experiment settings and reproducibility metadata.
 
+PR quality gate checklist is standardized at `docs/CI_CHECKLIST.md` and automated via `scripts/ci_checklist.sh` in GitHub Actions.
+
 ---
 
 ## 📜 License
