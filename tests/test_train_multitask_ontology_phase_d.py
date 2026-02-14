@@ -1,7 +1,9 @@
 import subprocess
 import sys
 
-import torch
+import pytest
+
+torch = pytest.importorskip("torch")
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
