@@ -35,7 +35,7 @@ def test_validate_ontology_cli_success(tmp_path: Path):
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     assert result.returncode == 0
     assert "Ontology validation succeeded" in result.stdout
-    assert "Checked constraints: 6" in result.stdout
+    assert "Checked constraints: 8" in result.stdout
 
 
 def test_validate_ontology_cli_missing_file_fails(tmp_path: Path):

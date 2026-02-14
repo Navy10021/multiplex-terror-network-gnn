@@ -63,3 +63,12 @@
         sh:minInclusive 0 ;
         sh:maxInclusive 1 ;
     ] .
+
+:RelationRoleCompatibilityShape a sh:NodeShape ;
+    sh:targetClass :Relation ;
+    sh:message "Relation-role compatibility is validated in runtime validator for manifest edges." .
+
+:TemporalInteractionShape a sh:NodeShape ;
+    sh:targetClass :InteractionRule ;
+    sh:message "Temporal interaction lag/order constraints are validated in runtime validator using events." .
+

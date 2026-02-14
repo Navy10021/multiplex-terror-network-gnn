@@ -5,6 +5,17 @@
 
 ---
 
+
+## 0) 실행 상태
+
+- [x] **Phase A 시작/반영**: validator 심화(규칙 단위 위반, severity, affected IDs, histogram, 시간/관계-역할/provenance 점검)
+- [ ] Phase B
+- [ ] Phase C
+- [ ] Phase D
+- [ ] Phase E
+
+---
+
 ## 1) 현재 상태 점검 요약
 
 ### 1.1 핵심 코드 위치

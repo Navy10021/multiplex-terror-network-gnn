@@ -5,6 +5,17 @@ This document is a forward engineering plan focused on upgrading this repository
 
 ---
 
+
+## 0) Execution status
+
+- [x] **Phase A started**: validator depth expansion implemented (rule-level violations, severity, affected IDs, histogram, temporal/relation-role/provenance checks).
+- [ ] Phase B
+- [ ] Phase C
+- [ ] Phase D
+- [ ] Phase E
+
+---
+
 ## 1) Current codebase checkpoint (as-is audit)
 
 ### 1.1 Generator / Data format / Pipeline map
