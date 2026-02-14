@@ -1,1 +1,1 @@
-"""CLI entrypoints for project utilities."""
+"""CLI entrypoint package."""

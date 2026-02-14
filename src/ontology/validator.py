@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 from src.ontology.load import ensure_ontology_assets
+from src.ontology.report_schema import validate_ontology_report_schema
 from src.validation.schema import (
     Manifest,
     ManifestValidationError,
@@ -62,6 +63,18 @@ def _violation(
         "severity": severity,
         "affected_ids": affected_ids or [],
     }
+
+
+def _action_hint_for_rule(rule_id: str) -> str:
+    hints = {
+        "roles.allowed": "Fix node role labels in generator config (role_probs keys).",
+        "hierarchy.command_source_role": "Adjust hierarchy generation so source role is leader/financier/operative.",
+        "hierarchy.no_self_loop": "Disable self-loops when sampling hierarchy edges.",
+        "finance.amount_positive": "Ensure txn_amount_sum is positive in finance edge attributes.",
+        "events.time_non_negative": "Set event timeline to non-negative day index (check num_days/offset logic).",
+        "provenance.confidence_range": "Clamp confidence to [0,1] and verify provenance mapping.",
+    }
+    return hints.get(rule_id, "Review generator config and manifest export for this rule.")
 
 
 def _to_float(value: Any) -> Tuple[float | None, str | None]:
@@ -455,7 +468,7 @@ def _build_report(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dic
 
     errors_by_check = {k: [v["message"] for v in vlist] for k, vlist in checks.items()}
 
-    return {
+    report = {
         "conforms": len(failure_violations) == 0,
         "constraints_checked": len(checks),
         "errors": [v["message"] for v in failure_violations],
@@ -472,6 +485,36 @@ def _build_report(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dic
             "violations_error": len(failure_violations),
         },
     }
+
+    violations_for_update = report.get("violations", [])
+    if not isinstance(violations_for_update, list):
+        violations_for_update = []
+
+    for violation in violations_for_update:
+        if not isinstance(violation, dict):
+            continue
+        rid = str(violation.get("rule_id", ""))
+        hint = _action_hint_for_rule(rid)
+        msg = str(violation.get("message", ""))
+        if "Action:" not in msg:
+            violation["message"] = f"{msg} | Action: {hint}"
+
+    report["errors"] = [
+        str(v.get("message", ""))
+        for v in violations_for_update
+        if isinstance(v, dict) and str(v.get("severity", "error")) in {"error", "critical"}
+    ]
+
+    by_check = report.get("violations_by_check")
+    if not isinstance(by_check, dict):
+        by_check = {}
+    report["errors_by_check"] = {
+        str(k): [str(v.get("message", "")) for v in vlist if isinstance(v, dict)]
+        for k, vlist in by_check.items()
+        if isinstance(vlist, list)
+    }
+
+    return validate_ontology_report_schema(report)
 
 
 def _raise_if_invalid(report: Dict[str, Any]) -> None:
