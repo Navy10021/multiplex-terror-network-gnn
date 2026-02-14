@@ -1,121 +1,121 @@
-# 🔬 Multiplex Terror Network GNN (Ontology-First)
+# 🔬🕸️ Multiplex Terror Network GNN
 
-> 합법적·방어적 목적의 **합성(Synthetic) 데이터 기반** 멀티플렉스 네트워크 연구 저장소입니다.
->
-> ⚠️ 실제 작전/타게팅 용도로 사용하지 마세요.
+Synthetic multiplex terrorist-network generator + ontology-aware GNN baselines for defensive research on:
+- High-Value Target (HVT) detection
+- Role inference
+- Importance scoring
+- Layer-aware link prediction
 
----
-
-## 1) 프로젝트 개요
-
-이 저장소는 다음 파이프라인을 제공합니다.
-
-1. 합성 멀티플렉스 네트워크 생성
-2. 온톨로지(OWL/SHACL + 런타임 룰) 검증
-3. PyG 데이터셋 변환
-4. 멀티태스크 GNN 학습(온톨로지 정규화 옵션)
-5. 리포팅/설명 아티팩트 생성
-
-```bash
-python -m src.run_all \
-  --config configs/generator_baseline.json \
-  --size 1500 \
-  --seed 2025 \
-  --out_root results
-```
+> **Purpose & Safety (Defensive Use Only)**  
+> This repository is for lawful, defensive research only (e.g., robustness testing, disruption simulation, resilience planning).  
+> **All data are synthetic.** Do **not** use this project for operational targeting, real-world surveillance, or analysis of real social networks.
 
 ---
 
-## 2) 온톨로지 중심 설계가 중요한 이유
+## 📌 Overview
 
-멀티플렉스 위협 네트워크는 레이어별 의미가 다르고, 관측 노이즈·결측·오탐이 섞이며, 시간/역할/관계 제약이 성능에 큰 영향을 줍니다.
+Real extremist/criminal-style networks differ from generic benchmark graphs:
+- **Multiplex semantics:** hierarchy, finance, communication, operation, ideology each carry different meaning.
+- **Observational distortion:** false edges, copied edges, and layer-specific missingness coexist.
+- **Actionability:** practitioners need interpretable risk signals, not only generic centrality.
+- **Evaluation risk:** link prediction can be inflated by leakage if test edges are used during message passing.
 
-이 프로젝트는 온톨로지를 **데이터 계약(data contract)** 으로 사용해 아래를 일관되게 맞춥니다.
-
-- 생성 단계 품질 통제 (strict / constrained / report_only)
-- 피처 엔지니어링(ontology bridge tensor)
-- 학습 손실 설계(ontology-aware loss)
-- 평가/설명(위반율, rule-chain 근거)
-
----
-
-## 3) 온톨로지 구성요소 (구체 설명)
-
-### 3.1 OWL 도메인 모델 (`ontology/terror.ttl`)
-
-- 핵심 클래스: `Actor`, `Role`, `Relation`, `Event`, `Evidence`, `EdgeProvenance`, `InteractionRule`
-- 역할 타입: `Leader`, `Financier`, `Courier`, `Operative`, `Support`
-- 관계 타입: `HierarchyRelation`, `FinanceRelation`, `CommunicationRelation`, `OperationRelation`, `IdeologyRelation`
-- 주요 속성:
-  - 구조: `source`, `target`, `hasRole`
-  - 이벤트: `timestamp`, `eventType`
-  - 금융: `txnAmountSum`, `txnCount`
-  - provenance: `isFalseEdge`, `isCopiedEdge`, `copiedFromLayer`, `confidence`
-  - 레이어 상호작용: `fromLayer`, `toLayer`, `temporalWindowDays`, `ruleType`, `strength`
-
-### 3.2 SHACL 제약 (`ontology/constraints.shacl.ttl`)
-
-- `ActorRoleShape`: 역할 카드inality
-- `EventTimeShape`: timestamp는 0 이상
-- `EventTypeShape`: `comm|txn|op`
-- `FinanceEdgeAmountShape`: 거래 합계 양수
-- `HierarchyNoSelfLoopShape`: self-loop 금지
-- `ProvenanceConfidenceShape`: confidence는 [0,1]
-
-### 3.3 런타임 검증기 (`src/ontology/validator.py`)
-
-정적 SHACL만으로 부족한 제약을 실제 manifest 데이터로 검증합니다.
-
-- 역할 화이트리스트
-- 계층(hierarchy) 명령 역할 소스 제약
-- 금융값 유효성(양수/음수/비정상값)
-- 관계-역할 호환성
-- provenance 유효성 (`is_false`, `copied_from`, `confidence`)
-- `ontology.layer_interactions` 기반 시간 순서/지연 제약
-
-리포트 산출:
-
-- `conforms`
-- `violations`, `violations_by_check`
-- `violation_histogram`
-- `errors_by_check`
-- 카운트(노드/레이어/이벤트/위반)
+This project provides a reproducible sandbox with:
+- **Ontology-first data contract** (OWL + SHACL + runtime validator)
+- **Config-driven synthetic generation** across easy/baseline/hard difficulty
+- **Multi-task node prediction** with shared GNN encoder
+- **Leakage-safe layer-wise link prediction** with hard negative sampling options
+- **Diagnostics + reporting artifacts** for validation and analysis
 
 ---
 
-## 4) 실행 모드
+## 🧭 Why Ontology-First?
 
-| 모드 | 동작 | 권장 사용 |
-|---|---|---|
-| `strict` (기본) | 위반 시 즉시 실패 | 품질 보장 실험 |
-| `constrained` | seed 이동 재시도 | 제약 만족 manifest 확보 |
-| `report_only` | 위반 기록 후 계속 | 탐색/분석/디버깅 |
+This repository originally evolved around ontology validation, and that philosophy is still central:
 
-예시:
+1. **Generation quality control**: strict/constrained/report-only validation modes
+2. **Schema consistency**: role/layer/provenance semantics are enforced as contracts
+3. **Training alignment**: ontology-compatible features and optional ontology-aware regularization
+4. **Explainability**: rule-violation summaries and explanation artifacts
 
-```bash
-python -m src.run_all \
-  --config configs/generator_baseline.json \
-  --size 800 --seed 2025 --out_root results \
-  --ontology_mode constrained
-```
+In short, the ontology is not documentation only—it is an executable guardrail.
 
 ---
 
-## 5) 주요 산출물
+## 🧱 Multiplex Ontology (v3)
 
-- `multiplex.json`
-- `ontology_validation_report.json`
-- `run_metadata.json`
-- `pyg_data.pt`
-- `multitask_metrics.json`
-- `reporting_summary/multitask_linkpred_summary.csv` (옵션)
-- `explanations/ontology_explanations.json` (옵션)
+### Layer semantics
+- `hierarchy`: command/control structure
+- `finance`: monetary/resource flow
+- `communication`: contacts/coordination
+- `operation`: joint tactical activity
+- `ideology`: influence/mentorship/recruitment
+
+### Node schema (conceptual)
+- **Roles**: leader, operative, financier, courier, support
+- **Context**: region/group attributes
+- **Continuous features**: activity/centrality/homophily/consistency-type signals
+
+### Edge schema + provenance
+- Core: `layer`, `weight`, `timestamp`, `confidence`
+- Provenance tags: `is_structural`, `is_false`, `is_copied`, `source_layer`
+
+### Noise taxonomy
+- **False edges**: spurious observed links
+- **Copied edges**: correlated cross-layer duplication
+- **Missingness**: layer-dependent edge dropout
 
 ---
 
-## 6) 설치
+## ✅ Ontology stack in this repo
 
+### 1) OWL model
+- `ontology/terror.ttl`
+- Core classes include Actor/Role/Relation/Event/Evidence/Provenance/Interaction concepts.
+
+### 2) SHACL constraints
+- `ontology/constraints.shacl.ttl`
+- Examples: role constraints, event/time constraints, finance value constraints, self-loop constraints, confidence range constraints.
+
+### 3) Runtime validator
+- `src/ontology/validator.py`
+- Checks that go beyond static SHACL:
+  - role whitelist/compatibility
+  - hierarchy source-role constraints
+  - invalid numeric values (`NaN`, `inf`, malformed)
+  - provenance consistency (`is_false`, `copied_from`, `confidence`)
+  - layer-interaction temporal checks from manifest rules
+
+### Validation modes
+- `strict` (default): fail fast on violations
+- `constrained`: retry generation with seed offsets to satisfy constraints
+- `report_only`: continue while recording violations
+
+---
+
+## 🧠 Modeling & training
+
+### Multi-task node learning
+Shared encoder + task heads:
+- HVT binary classification
+- Role multi-class classification
+- Importance regression
+
+Representative training script:
+- `src/models/train_multitask_gnn_v3.py`
+
+### Layer-wise link prediction
+- Leakage-safe protocol by removing validation/test edges from encoder graph
+- Negative sampling modes (e.g., `uniform`, `hard_region`)
+
+Representative script:
+- `src/models/train_linkpred_layer_v3.py`
+
+---
+
+## 🚀 Quick start
+
+### Installation
 ```bash
 git clone https://github.com/Navy10021/multiplex-terror-network-gnn.git
 cd multiplex-terror-network-gnn
@@ -124,22 +124,28 @@ source .venv/bin/activate
 pip install -r requirements.lock
 ```
 
-CUDA/OS 환경에 따라 PyTorch/PyG 선설치가 필요할 수 있습니다.
+> Depending on environment, install compatible PyTorch/PyG first.
 
----
-
-## 7) 빠른 사용법
-
-### 7.1 E2E 실행
-
+### End-to-end pipeline
 ```bash
 python -m src.run_all \
   --config configs/generator_baseline.json \
-  --size 1200 --seed 2025 --out_root results
+  --size 1500 \
+  --seed 2025 \
+  --out_root results
 ```
 
-### 7.2 검증 전용 실행
+### Ontology mode example
+```bash
+python -m src.run_all \
+  --config configs/generator_baseline.json \
+  --size 800 \
+  --seed 2025 \
+  --out_root results \
+  --ontology_mode constrained
+```
 
+### Ontology validation only
 ```bash
 python -m src.cli.validate_ontology \
   --manifest data/multiplex_baseline/multiplex.json \
@@ -148,41 +154,108 @@ python -m src.cli.validate_ontology \
   --json
 ```
 
-### 7.3 온톨로지 손실 포함 학습
+---
 
-```bash
-python -m src.models.train_multitask_gnn_v3 \
-  --data_path results/<run>/pyg_data.pt \
-  --encoder transformer --epochs 20 \
-  --ontology_loss \
-  --ontology_loss_role_weight 0.2 \
-  --ontology_loss_transitivity_weight 0.1 \
-  --ontology_loss_temporal_weight 0.1
-```
+## 📦 Typical outputs
+
+A run directory generally includes:
+- `multiplex.json`
+- `ontology_validation_report.json`
+- `pyg_data.pt`
+- `multitask_metrics.json`
+- link prediction result JSON files
+- `run_metadata.json`
+- `explanations/ontology_explanations.json` (when enabled)
+- `reporting_summary/multitask_linkpred_summary.csv` (when enabled)
 
 ---
 
-## 8) 보안/견고성 점검 포인트
-
-- `pyg_data.pt`는 pickle 기반 로딩 경로(`torch.load(weights_only=False)`)를 사용하므로 **신뢰 가능한 파일만** 로드하세요.
-- `strict` 모드 실패는 시스템 오류가 아니라 제약 위반일 수 있습니다. 필요 시 `report_only` 또는 `constrained`로 전환하세요.
-- 온톨로지 검증기는 비정상 수치(`NaN`, `inf`, 비숫자 문자열)도 위반으로 안전하게 처리합니다.
-
----
-
-## 9) 개발자 검증 명령
+## 🧪 Suggested reproducibility workflow
 
 ```bash
+# 1) unit tests
 pytest -q
+
+# 2) CLI health checks
 python -m src.run_all --help
 python -m src.cli.validate_ontology --help
+
+# 3) compare difficulty presets
+for config in easy baseline hard; do
+  python -m src.run_all \
+    --config configs/generator_${config}.json \
+    --size 1500 --seed 2025 --out_root results/${config}/
+done
 ```
 
 ---
 
-## 10) 로드맵
+## 📁 Project structure (current)
 
-- English: `PLANS.md`
-- 한국어: `PLANS_KOR.md`
+```text
+multiplex-terror-network-gnn/
+├── README.md
+├── PLANS.md
+├── PLANS_KOR.md
+├── ontology/
+│   ├── terror.ttl
+│   └── constraints.shacl.ttl
+├── configs/
+│   ├── generator_easy.json
+│   ├── generator_baseline.json
+│   └── generator_hard.json
+├── src/
+│   ├── run_all.py
+│   ├── cli/validate_ontology.py
+│   ├── ontology/{load.py,validator.py}
+│   ├── data/{multiplex_generator_v3.py,build_pyg_dataset_v3.py,basic_diagnostics_v3.py}
+│   ├── models/{train_multitask_gnn_v3.py,train_linkpred_layer_v3.py,...}
+│   ├── analysis/plot_multitask_linkpred_summary.py
+│   └── validation/schema.py
+└── tests/
+```
 
-Use this repository only for legal, ethical, and defensive research contexts.
+---
+
+## 🔒 Ethical use policy
+
+### Allowed
+- Defensive CT/criminal-network research on synthetic or properly governed anonymized data
+- Methodological benchmarking, robustness/stress testing, fairness auditing
+- Educational use
+
+### Prohibited
+- Operational targeting of real persons/groups
+- Unauthorized surveillance
+- Repression/discrimination/rights-violating use
+
+If adapted to real data: legal authorization, ethics review, governance controls, human oversight, and bias audits are mandatory.
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome for:
+- temporal/dynamic extensions
+- robustness under adversarial/noisy settings
+- stronger baselines and evaluation protocols
+- interpretability and reporting improvements
+
+Please open an issue/PR with clear experiment settings and reproducibility metadata.
+
+---
+
+## 📜 License
+
+Current license status in this repository is **TBD**.
+Please contact the maintainer before commercial or redistribution use.
+
+---
+
+## 📬 Contact
+- Maintainer: Yoon-seop Lee
+- GitHub: `@Navy10021`
+
+---
+
+**Last updated:** 2026-02-14 (v3 README refresh)
