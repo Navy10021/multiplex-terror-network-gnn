@@ -7,6 +7,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import random
 
+from src.ontology.validator import (
+    OntologyValidationError,
+    validate_manifest_dict_with_ontology,
+    write_ontology_report,
+)
 from src.utils.exp_logging import build_artifact_dir, collect_run_metadata, write_run_metadata
 from src.validation.schema import validate_manifest_dict
 
@@ -1489,6 +1494,9 @@ def main() -> None:
     parser.add_argument("--run_prefix", type=str, default="run", help="Prefix for auto-named run directories")
     parser.add_argument("--seed", type=int, default=2025, help="random seed")
     parser.add_argument("--config", type=str, default=None, help="JSON config file for generator (optional)")
+    parser.add_argument("--ontology", type=str, default="ontology/terror.ttl", help="Ontology TTL path")
+    parser.add_argument("--shapes", type=str, default="ontology/constraints.shacl.ttl", help="SHACL constraints path")
+    parser.add_argument("--no_ontology_strict", action="store_true", help="Do not fail generation on ontology-rule violations")
 
     args = parser.parse_args()
 
@@ -1505,11 +1513,29 @@ def main() -> None:
     manifest = generate_multiplex_with_config(cfg)
     manifest_model = validate_manifest_dict(manifest)
 
+    ontology_report = {"conforms": True, "constraints_checked": 0, "errors": []}
+    try:
+        ontology_report = validate_manifest_dict_with_ontology(
+            manifest_dict=manifest,
+            ontology_path=args.ontology,
+            shapes_path=args.shapes,
+        )
+        print("[*] Ontology validation passed")
+    except OntologyValidationError as exc:
+        ontology_report = {"conforms": False, "constraints_checked": 4, "errors": [str(exc)]}
+        if not args.no_ontology_strict:
+            raise
+        print(f"[!] Ontology validation warning (strict disabled): {exc}")
+
     out_path = os.path.join(out_dir, "multiplex.json")
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
 
     print(f"[*] Saved multiplex manifest to: {out_path}")
+
+    ontology_report_path = os.path.join(out_dir, "ontology_validation_report.json")
+    write_ontology_report(ontology_report, ontology_report_path)
+    print(f"[*] Saved ontology report to: {ontology_report_path}")
 
     metadata = collect_run_metadata(
         out_dir=out_dir,
@@ -1519,6 +1545,7 @@ def main() -> None:
             "manifest_path": os.path.abspath(out_path),
             "validated": True,
             "generator": manifest_model.meta.generator,
+            "ontology_validation": ontology_report,
         },
     )
     meta_path = write_run_metadata(out_dir, metadata)
