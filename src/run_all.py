@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from typing import Dict, Optional, Any, List
+from typing import Any, Dict, List, Optional
 
+from src.analysis.plot_multitask_linkpred_summary import build_runs_dataframe
 from src.data.basic_diagnostics_v3 import (
     activity_observability_diagnostics,
     basic_stats,
@@ -17,14 +18,12 @@ from src.data.basic_diagnostics_v3 import (
     event_burstiness_diagnostics,
     false_edge_observability_diagnostics,
     label_diagnostics,
+    layer_overlap_diagnostics,
     load_multiplex,
     operation_cell_purity,
     print_meta,
-    layer_overlap_diagnostics,
     rolewise_degree_stats,
 )
-from src.data.build_pyg_dataset_v3 import build_pyg_data
-from src.analysis.plot_multitask_linkpred_summary import build_runs_dataframe
 from src.data.multiplex_generator_v3 import (
     generate_multiplex_with_config,
     generate_with_ontology_constraints,
@@ -35,12 +34,9 @@ from src.ontology.validator import (
     validate_manifest_dict_with_ontology,
     write_ontology_report,
 )
+from src.reporting.cards import write_run_cards
 from src.utils.exp_logging import build_artifact_dir, collect_run_metadata, write_run_metadata
 from src.validation.schema import Manifest, validate_manifest_dict
-
-
-
-
 
 
 def _safe_int(x: Any, default: int = -1) -> int:
@@ -271,6 +267,24 @@ def _resolve_ontology_mode(args: argparse.Namespace) -> tuple[bool, bool]:
     return True, False
 
 
+
+
+def _load_retry_policy_from_config(config_path: str) -> Dict[str, Any]:
+    """Load ontology retry policy from generator config JSON when present."""
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return {}
+    pol = raw.get("ontology_retry_policy", {}) if isinstance(raw, dict) else {}
+    return pol if isinstance(pol, dict) else {}
+
+
+def _parse_csv_list(value: Optional[str]) -> List[str]:
+    if not value:
+        return []
+    return [v.strip() for v in str(value).split(",") if v.strip()]
+
 def _write_manifest(manifest: Dict, path: str) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
@@ -296,41 +310,6 @@ def _run_diagnostics(manifest_path: str, out_dir: str) -> None:
     label_diagnostics(labels, out_dir=os.path.join(out_dir, "5_labels"))
 
 
-def _write_dataset_card(manifest: Manifest, run_dir: str, dataset_path: Optional[str], diagnostics_dir: Optional[str]) -> str:
-    lines = ["# DATASET_CARD", ""]
-    lines.append(f"- generator: `{manifest.meta.generator}`")
-    lines.append(f"- seed: `{manifest.meta.seed}`")
-    lines.append(f"- num_nodes: `{manifest.meta.num_nodes}`")
-    lines.append("")
-
-    lines.append("## Layer summary")
-    lines.append("| layer | edges | false_rate | copied_rate |")
-    lines.append("| --- | ---: | ---: | ---: |")
-    for lname, layer in manifest.layers.items():
-        total = len(layer.edges)
-        if total == 0:
-            false_rate = 0.0
-            copied_rate = 0.0
-        else:
-            false_rate = sum(1 for e in layer.edges if (e.is_false or 0) != 0) / total
-            copied_rate = sum(1 for e in layer.edges if e.copied_from) / total
-        lines.append(
-            f"| {lname} | {total} | {false_rate:.3f} | {copied_rate:.3f} |"
-        )
-
-    lines.append("")
-    lines.append("## Artifacts")
-    if dataset_path:
-        lines.append(f"- PyG dataset: `{os.path.abspath(dataset_path)}`")
-    if diagnostics_dir:
-        lines.append(f"- Diagnostics: `{os.path.abspath(diagnostics_dir)}`")
-
-    card_path = os.path.join(run_dir, "DATASET_CARD.md")
-    with open(card_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-    return card_path
-
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="End-to-end runner: generate → build → diagnostics")
@@ -348,6 +327,9 @@ def main() -> None:
     parser.add_argument("--ontology_constrained", action="store_true", help="Retry generation with shifted seeds until ontology validation conforms")
     parser.add_argument("--ontology_max_retries", type=int, default=3, help="Max generation attempts in ontology_constrained mode")
     parser.add_argument("--ontology_retry_seed_stride", type=int, default=1, help="Seed increment per attempt in ontology_constrained mode")
+    parser.add_argument("--ontology_retry_rule_ids", type=str, default="", help="Comma-separated rule_ids that are eligible for constrained retry (empty: any error rule)")
+    parser.add_argument("--ontology_retry_severities", type=str, default="error,critical", help="Comma-separated severities eligible for retry")
+    parser.add_argument("--ontology_constrained_fallback_report_only", action="store_true", help="When constrained retries fail, continue in report_only mode and keep artifacts instead of failing")
     parser.add_argument("--run_reporting_summary", action="store_true", help="Write ontology-aware reporting summary CSV for this run")
     parser.add_argument("--write_explanations", action="store_true", help="Write node-level ontology explanation artifacts")
     parser.add_argument("--explanations_top_k", type=int, default=25, help="Number of top-degree nodes to include in explanations")
@@ -361,22 +343,35 @@ def main() -> None:
 
     cfg = load_generator_config(args.config, size=args.size, seed=args.seed)
 
+    config_retry_policy = _load_retry_policy_from_config(args.config)
+    retry_max = int(config_retry_policy.get("max_retries", args.ontology_max_retries))
+    retry_stride = int(config_retry_policy.get("seed_stride", args.ontology_retry_seed_stride))
+    retry_rule_ids = _parse_csv_list(args.ontology_retry_rule_ids) or list(config_retry_policy.get("retry_rule_ids", []) or [])
+    retry_severities = _parse_csv_list(args.ontology_retry_severities) or list(config_retry_policy.get("retry_severities", ["error", "critical"]) or ["error", "critical"])
+    fallback_report_only = bool(config_retry_policy.get("fallback_report_only", args.ontology_constrained_fallback_report_only))
+
     ontology_telemetry = {"mode": "constrained" if constrained_mode else "single_pass", "attempts": 1, "failed_attempts": 0}
     if constrained_mode:
         manifest, ontology_report, ontology_telemetry = generate_with_ontology_constraints(
             cfg=cfg,
             ontology_path=args.ontology,
             shapes_path=args.shapes,
-            max_retries=args.ontology_max_retries,
-            retry_seed_stride=args.ontology_retry_seed_stride,
+            max_retries=retry_max,
+            retry_seed_stride=retry_stride,
+            retry_on_rule_ids=retry_rule_ids,
+            retry_on_severities=retry_severities,
         )
         if ontology_report.get("conforms", False):
             print(f"[*] Ontology-constrained generation passed at attempt {ontology_telemetry.get('successful_attempt')}")
         else:
             msg = "ontology-constrained generation exhausted retries without conformance"
-            if strict_mode:
+            if strict_mode and not fallback_report_only:
                 raise OntologyValidationError(msg)
-            print(f"[!] Ontology validation warning (strict disabled): {msg}")
+            if strict_mode and fallback_report_only:
+                strict_mode = False
+                print(f"[!] Constrained retries failed, switching to report_only fallback: {msg}")
+            else:
+                print(f"[!] Ontology validation warning (strict disabled): {msg}")
     else:
         manifest = generate_multiplex_with_config(cfg)
         ontology_report = validate_manifest_dict_with_ontology(
@@ -406,6 +401,8 @@ def main() -> None:
 
     dataset_path: Optional[str] = None
     if not args.skip_build:
+        from src.data.build_pyg_dataset_v3 import build_pyg_data
+
         dataset_path = os.path.join(run_dir, "pyg_data.pt")
         data = build_pyg_data(manifest_path)
         import torch
@@ -440,6 +437,8 @@ def main() -> None:
             "ontology_report": os.path.abspath(ontology_report_path),
             "ontology_conforms": bool(ontology_report.get("conforms", False)),
             "ontology_generation_telemetry": ontology_telemetry,
+            "ontology_retry_log": ontology_telemetry.get("retry_log", []),
+            "ontology_retry_policy": ontology_telemetry.get("retry_policy", {}),
             "ontology_mode_resolved": "constrained" if constrained_mode else ("strict" if strict_mode else "report_only"),
             "ontology_strict_mode": bool(strict_mode),
             "ontology_explanations": os.path.abspath(explanation_path) if explanation_path else None,
@@ -449,8 +448,14 @@ def main() -> None:
     meta_path = write_run_metadata(run_dir, metadata)
     print(f"[*] Logged metadata: {meta_path}")
 
-    card_path = _write_dataset_card(manifest_model, run_dir, dataset_path, diagnostics_dir)
-    print(f"[*] Wrote dataset card: {card_path}")
+    cards = write_run_cards(
+        manifest_model,
+        run_dir=run_dir,
+        dataset_path=dataset_path,
+        diagnostics_dir=diagnostics_dir,
+    )
+    print(f"[*] Wrote dataset card: {cards.get('dataset_card')}")
+    print(f"[*] Wrote model card: {cards.get('model_card')}")
 
 
 if __name__ == "__main__":

@@ -124,7 +124,7 @@ source .venv/bin/activate
 pip install -r requirements.lock
 ```
 
-> Depending on environment, install compatible PyTorch/PyG first.
+> PyTorch/PyG는 환경(CPU/CUDA/Colab)별로 별도 설치가 필요합니다. `docs/INSTALL.md` 설치 레시피를 먼저 확인하세요.
 
 ### End-to-end pipeline
 ```bash
@@ -167,6 +167,8 @@ A run directory generally includes:
 - `run_metadata.json`
 - `explanations/ontology_explanations.json` (when enabled)
 - `reporting_summary/multitask_linkpred_summary.csv` (when enabled)
+- `DATASET_CARD.md`
+- `MODEL_CARD.md`
 
 ---
 
@@ -187,6 +189,15 @@ for config in easy baseline hard; do
     --size 1500 --seed 2025 --out_root results/${config}/
 done
 ```
+
+Quick script version:
+
+```bash
+bash scripts/run_easy_baseline_hard.sh 2025 1500 results/repro_runs
+bash scripts/summarize_all.sh results/repro_runs results/summary_all
+```
+
+See `docs/REPRO.md` for full pipeline details.
 
 ---
 
