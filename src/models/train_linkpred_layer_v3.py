@@ -32,7 +32,6 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 from torch_geometric.data import Data
 from torch_geometric.nn import RGCNConv
 
-
 # ---------------------------------------------------------------------
 # Repro / utils
 # ---------------------------------------------------------------------
@@ -414,6 +413,40 @@ def build_train_graph_without_leakage(
     return train_data
 
 
+def assert_no_target_edge_leakage(
+    train_graph: Data,
+    *,
+    target_rel: int,
+    heldout_pos: torch.Tensor,
+    directed: bool,
+) -> None:
+    """Assert target-layer heldout positives are removed from encoder graph."""
+    mask_target = train_graph.edge_type == int(target_rel)
+    train_target = train_graph.edge_index[:, mask_target]
+    train_set = edge_index_to_set(train_target, directed=directed)
+    held_set = edge_index_to_set(heldout_pos, directed=directed)
+    leaked = sorted(list(train_set.intersection(held_set)))
+    if leaked:
+        raise AssertionError(
+            "Leakage detected: heldout target-layer edges are present in encoder graph. "
+            f"examples={leaked[:5]}"
+        )
+
+
+def assert_hard_region_negatives(neg_edge_index: torch.Tensor, regions: np.ndarray) -> None:
+    """Assert each sampled negative edge stays within the same region bucket."""
+    src = neg_edge_index[0].tolist()
+    dst = neg_edge_index[1].tolist()
+    bad = []
+    for u, v in zip(src, dst):
+        if int(regions[int(u)]) != int(regions[int(v)]):
+            bad.append((int(u), int(v)))
+            if len(bad) >= 5:
+                break
+    if bad:
+        raise AssertionError(f"hard_region negatives violate region constraint: examples={bad}")
+
+
 def expand_relations_with_edge_flags(data: Data) -> Tuple[Data, int]:
     """
     Optional: encode (is_false, is_copied) as part of relation type for message passing.
@@ -645,7 +678,7 @@ def build_argparser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_argparser().parse_args()
 
-    # enforce flag dependency inside main (fixes NameError from prior broken indentation)
+    # enforce flag dependency inside main
     if args.include_edge_flags and not args.edge_attr_agg:
         print("[!] --include_edge_flags implies --edge_attr_agg. Enabling --edge_attr_agg.")
         args.edge_attr_agg = True
@@ -698,6 +731,9 @@ def main() -> None:
             train_neg = sample_negative_edges_hard_region(num_nodes, int(train_pos.size(1)), existing, directed=directed, regions=regions, seed=args.seed + 1)
             val_neg = sample_negative_edges_hard_region(num_nodes, int(val_pos.size(1)), existing, directed=directed, regions=regions, seed=args.seed + 2)
             test_neg = sample_negative_edges_hard_region(num_nodes, int(test_pos.size(1)), existing, directed=directed, regions=regions, seed=args.seed + 3)
+            assert_hard_region_negatives(train_neg, regions)
+            assert_hard_region_negatives(val_neg, regions)
+            assert_hard_region_negatives(test_neg, regions)
 
     # -----------------------------------------------------------------
     # Leakage-safe training graph (encoder sees only TRAIN positives for target layer)
@@ -705,6 +741,12 @@ def main() -> None:
     heldout_pos = torch.cat([val_pos, test_pos], dim=1) if (val_pos.numel() and test_pos.numel()) else (val_pos if val_pos.numel() else test_pos)
     train_graph = build_train_graph_without_leakage(
         data,
+        target_rel=target_rel,
+        heldout_pos=heldout_pos,
+        directed=directed,
+    )
+    assert_no_target_edge_leakage(
+        train_graph,
         target_rel=target_rel,
         heldout_pos=heldout_pos,
         directed=directed,
