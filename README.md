@@ -212,6 +212,25 @@ To validate an existing manifest on its own (e.g., after editing or before shari
 python -m src.validation.schema data/multiplex_baseline/multiplex.json --summary
 ```
 
+For ontology-backed rule validation (role/relation and temporal checks), run:
+
+```bash
+python -m src.cli.validate_ontology \
+  --manifest data/multiplex_baseline/multiplex.json \
+  --ontology ontology/terror.ttl \
+  --shapes ontology/constraints.shacl.ttl
+```
+
+Optional JSON report:
+
+```bash
+python -m src.cli.validate_ontology \
+  --manifest data/multiplex_baseline/multiplex.json \
+  --json
+```
+
+`src/data/multiplex_generator_v3.py` and `src/run_all.py` also run ontology checks and write `ontology_validation_report.json` by default. Use `--no_ontology_strict` to keep running while recording violations.
+
 This exits non-zero on any schema error and prints node/edge/layer/event counts when `--summary` is provided.
 
 ---
