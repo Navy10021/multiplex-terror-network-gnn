@@ -1,10 +1,10 @@
 # 🔬🕸️ Multiplex Terror Network GNN
 
 Synthetic multiplex terrorist-network generator + ontology-aware GNN baselines for defensive research on:
-- High-Value Target (HVT) detection
-- Role inference
-- Importance scoring
-- Layer-aware link prediction
+- High-Value Target (HVT) classification
+- Role prediction (multi-class)
+- Node importance regression
+- Leakage-safe layer-wise link predictio
 
 > **Purpose & Safety (Defensive Use Only)**  
 > This repository is for lawful, defensive research only (e.g., robustness testing, disruption simulation, resilience planning).  
@@ -14,18 +14,36 @@ Synthetic multiplex terrorist-network generator + ontology-aware GNN baselines f
 
 ## 📌 Overview
 
-Real extremist/criminal-style networks differ from generic benchmark graphs:
-- **Multiplex semantics:** hierarchy, finance, communication, operation, ideology each carry different meaning.
-- **Observational distortion:** false edges, copied edges, and layer-specific missingness coexist.
-- **Actionability:** practitioners need interpretable risk signals, not only generic centrality.
-- **Evaluation risk:** link prediction can be inflated by leakage if test edges are used during message passing.
+This repository presents a **multiplex graph neural network framework** for structured analysis of multi-relational organizational networks.
 
-This project provides a reproducible sandbox with:
-- **Ontology-first data contract** (OWL + SHACL + runtime validator)
-- **Config-driven synthetic generation** across easy/baseline/hard difficulty
-- **Multi-task node prediction** with shared GNN encoder
-- **Leakage-safe layer-wise link prediction** with hard negative sampling options
-- **Diagnostics + reporting artifacts** for validation and analysis
+Unlike single-layer graph approaches, this system preserves heterogeneous relational semantics (hierarchical, financial, communicative, operational, ideological) through an **ontology-driven multiplex graph generator**, and performs joint predictive inference via a **multi-task GNN architecture**.
+
+---
+
+## 🔑 Key Contributions
+
+### 1️⃣ Ontology-First Multiplex Graph Generation
+- Formal schema-based graph construction
+- Rule-based structural constraint enforcement
+- Semantic consistency validation at generation time
+- Improved data quality and experimental reproducibility
+
+### 2️⃣ Shared-Encoder Multi-Task GNN
+- Unified graph representation learning
+- Joint optimization across classification and regression tasks
+- Improved structural signal integration
+- Efficient parameter sharing
+
+### 3️⃣ Leakage-Safe Link Prediction Protocol
+- Strict separation of train / validation / test edges
+- Message-passing contamination prevention
+- Layer-wise negative sampling strategies
+- Reliable structural generalization evaluation
+
+### 4️⃣ Research-Oriented Experimental Design
+- Diagnostic reporting
+- Task-level performance breakdown
+- Extensible to temporal graphs, adversarial robustness, and explainable graph inference
 
 ---
 
