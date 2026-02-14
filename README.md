@@ -221,6 +221,31 @@ python -m src.cli.validate_ontology \
   --shapes ontology/constraints.shacl.ttl
 ```
 
+Optional JSON report:
+
+```bash
+python -m src.cli.validate_ontology \
+  --manifest data/multiplex_baseline/multiplex.json \
+  --json
+```
+
+`src/data/multiplex_generator_v3.py` and `src/run_all.py` also run ontology checks and write `ontology_validation_report.json` by default. Use `--no_ontology_strict` to keep running while recording violations.
+
+## 🧭 Ontology-based Terror Network: Current Status & Next Focus
+
+### What is already reflected
+- OWL/SHACL ontology assets are included (`ontology/terror.ttl`, `ontology/constraints.shacl.ttl`).
+- Manifest-level ontology validation is available via `python -m src.cli.validate_ontology`.
+- Generator/runner flows write `ontology_validation_report.json` so conformance is tracked as an artifact.
+
+### What to evolve next (research-focused)
+- **Generation**: move from post-hoc validation to ontology-constrained sampling with repair telemetry.
+- **Builder (PyG)**: expose ontology-derived masks/tensors (role-pair constraint masks, temporal violation candidates).
+- **Model Zoo**: add ontology-aware losses (role–relation compatibility, transitivity, temporal consistency).
+- **Reporting**: add ontology compliance/violation metrics and rule-grounded explanation outputs per node.
+
+Detailed forward plan is maintained in `PLANE.md` (ontology-centered roadmap only).
+
 This exits non-zero on any schema error and prints node/edge/layer/event counts when `--summary` is provided.
 
 ---

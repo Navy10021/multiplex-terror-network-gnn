@@ -19,8 +19,20 @@ def _write_manifest(tmp_path: Path, overrides=None) -> Path:
             {"id": 1, "role": "support", "region": "x", "group": "g"},
         ],
         "layers": {
-            "hierarchy": {"directed": True, "edges": [{"source": 0, "target": 1}]},
-            "finance": {"directed": True, "edges": [{"source": 0, "target": 1, "txn_amount_sum": 2.0}]},
+            "hierarchy": {"directed": True, "edges": [{"source": 0, "target": 1, "is_false": 0}]},
+            "finance": {
+                "directed": True,
+                "edges": [
+                    {
+                        "source": 0,
+                        "target": 1,
+                        "txn_amount_sum": 2.0,
+                        "txn_count": 1.0,
+                        "is_false": 0,
+                        "copied_from": "communication",
+                    }
+                ],
+            },
         },
         "events": [{"time": 1, "event_type": "txn", "u": 0, "v": 1, "meta": {}}],
     }
@@ -39,13 +51,14 @@ def test_validate_manifest_with_ontology_success(tmp_path: Path):
         shapes_path="ontology/constraints.shacl.ttl",
     )
     assert report["conforms"] is True
-    assert report["constraints_checked"] == 4
+    assert report["constraints_checked"] == 6
 
 
 def test_validate_manifest_with_ontology_failure(tmp_path: Path):
     def _bad(m):
         m["layers"]["hierarchy"]["edges"][0]["source"] = 1
         m["layers"]["finance"]["edges"][0]["txn_amount_sum"] = -5
+        m["events"][0]["event_type"] = "meeting"
 
     path = _write_manifest(tmp_path, overrides=_bad)
 
@@ -58,3 +71,22 @@ def test_validate_manifest_with_ontology_failure(tmp_path: Path):
 
     assert "non-command role" in str(exc.value)
     assert "non-positive" in str(exc.value)
+    assert "unsupported event_type" in str(exc.value)
+
+
+def test_validate_manifest_with_ontology_provenance_failure(tmp_path: Path):
+    def _bad(m):
+        m["layers"]["finance"]["edges"][0]["is_false"] = 2
+        m["layers"]["finance"]["edges"][0]["copied_from"] = "finance"
+
+    path = _write_manifest(tmp_path, overrides=_bad)
+
+    with pytest.raises(OntologyValidationError) as exc:
+        validate_manifest_with_ontology(
+            manifest_path=str(path),
+            ontology_path="ontology/terror.ttl",
+            shapes_path="ontology/constraints.shacl.ttl",
+        )
+
+    assert "invalid is_false" in str(exc.value)
+    assert "cannot match destination layer" in str(exc.value)

@@ -35,6 +35,7 @@ def test_validate_ontology_cli_success(tmp_path: Path):
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     assert result.returncode == 0
     assert "Ontology validation succeeded" in result.stdout
+    assert "Checked constraints: 6" in result.stdout
 
 
 def test_validate_ontology_cli_missing_file_fails(tmp_path: Path):
@@ -51,3 +52,18 @@ def test_validate_ontology_cli_missing_file_fails(tmp_path: Path):
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     assert result.returncode != 0
     assert "ontology file not found" in result.stderr
+
+
+def test_validate_ontology_cli_json_output(tmp_path: Path):
+    manifest = _manifest(tmp_path)
+    cmd = [
+        sys.executable,
+        "-m",
+        "src.cli.validate_ontology",
+        "--manifest",
+        str(manifest),
+        "--json",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    assert result.returncode == 0
+    assert '"conforms": true' in result.stdout
