@@ -1,0 +1,72 @@
+@prefix : <http://example.org/terror#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+:TerrorOntology a owl:Ontology ;
+    rdfs:label "Multiplex Terror Network Ontology" ;
+    rdfs:comment "Defensive synthetic CT network ontology for quality validation and explainability." .
+
+### Core classes
+:Actor a owl:Class .
+:Role a owl:Class .
+:Relation a owl:Class .
+:HierarchyRelation a owl:Class ; rdfs:subClassOf :Relation .
+:FinanceRelation a owl:Class ; rdfs:subClassOf :Relation .
+:CommunicationRelation a owl:Class ; rdfs:subClassOf :Relation .
+:OperationRelation a owl:Class ; rdfs:subClassOf :Relation .
+:IdeologyRelation a owl:Class ; rdfs:subClassOf :Relation .
+
+:Event a owl:Class .
+:Evidence a owl:Class .
+:Observation a owl:Class ; rdfs:subClassOf :Evidence .
+:EdgeProvenance a owl:Class ; rdfs:subClassOf :Evidence .
+
+:Layer a owl:Class .
+:LayerInteraction a owl:Class .
+:InteractionRule a owl:Class .
+
+### Role modeling (typing, not subclassing Actor)
+:Leader a owl:Class ; rdfs:subClassOf :Role .
+:Financier a owl:Class ; rdfs:subClassOf :Role .
+:Courier a owl:Class ; rdfs:subClassOf :Role .
+:Operative a owl:Class ; rdfs:subClassOf :Role .
+:Support a owl:Class ; rdfs:subClassOf :Role .
+
+### Object properties
+:hasRole a owl:ObjectProperty ;
+    rdfs:domain :Actor ;
+    rdfs:range :Role .
+
+:hasEvidence a owl:ObjectProperty ;
+    rdfs:domain :Relation ;
+    rdfs:range :Evidence .
+
+:fromLayer a owl:ObjectProperty ;
+    rdfs:domain :InteractionRule ;
+    rdfs:range :Layer .
+
+:toLayer a owl:ObjectProperty ;
+    rdfs:domain :InteractionRule ;
+    rdfs:range :Layer .
+
+### Datatype properties
+:source a owl:DatatypeProperty ; rdfs:domain :Relation ; rdfs:range xsd:int .
+:target a owl:DatatypeProperty ; rdfs:domain :Relation ; rdfs:range xsd:int .
+:timestamp a owl:DatatypeProperty ; rdfs:domain :Event ; rdfs:range xsd:int .
+:eventType a owl:DatatypeProperty ; rdfs:domain :Event ; rdfs:range xsd:string .
+
+:txnAmountSum a owl:DatatypeProperty ; rdfs:domain :FinanceRelation ; rdfs:range xsd:float .
+:txnCount a owl:DatatypeProperty ; rdfs:domain :FinanceRelation ; rdfs:range xsd:float .
+:commCount a owl:DatatypeProperty ; rdfs:domain :CommunicationRelation ; rdfs:range xsd:float .
+
+:isFalseEdge a owl:DatatypeProperty ; rdfs:domain :EdgeProvenance ; rdfs:range xsd:boolean .
+:isCopiedEdge a owl:DatatypeProperty ; rdfs:domain :EdgeProvenance ; rdfs:range xsd:boolean .
+:copiedFromLayer a owl:DatatypeProperty ; rdfs:domain :EdgeProvenance ; rdfs:range xsd:string .
+:sourceLayer a owl:DatatypeProperty ; rdfs:domain :EdgeProvenance ; rdfs:range xsd:string .
+:confidence a owl:DatatypeProperty ; rdfs:domain :Evidence ; rdfs:range xsd:float .
+
+:ruleType a owl:DatatypeProperty ; rdfs:domain :InteractionRule ; rdfs:range xsd:string .
+:strength a owl:DatatypeProperty ; rdfs:domain :InteractionRule ; rdfs:range xsd:float .
+:temporalWindowDays a owl:DatatypeProperty ; rdfs:domain :InteractionRule ; rdfs:range xsd:int .

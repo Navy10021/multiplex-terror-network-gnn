@@ -1,0 +1,74 @@
+@prefix : <http://example.org/terror#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+:ActorRoleShape a sh:NodeShape ;
+    sh:targetClass :Actor ;
+    sh:property [
+        sh:path :hasRole ;
+        sh:minCount 1 ;
+        sh:maxCount 5 ;
+    ] .
+
+:EventTimeShape a sh:NodeShape ;
+    sh:targetClass :Event ;
+    sh:property [
+        sh:path :timestamp ;
+        sh:datatype xsd:int ;
+        sh:minInclusive 0 ;
+    ] .
+
+:EventTypeShape a sh:NodeShape ;
+    sh:targetClass :Event ;
+    sh:property [
+        sh:path :eventType ;
+        sh:in ( "comm" "txn" "op" ) ;
+    ] .
+
+:FinanceEdgeAmountShape a sh:NodeShape ;
+    sh:targetClass :FinanceRelation ;
+    sh:property [
+        sh:path :txnAmountSum ;
+        sh:datatype xsd:float ;
+        sh:minExclusive 0 ;
+    ] .
+
+:FinanceCountShape a sh:NodeShape ;
+    sh:targetClass :FinanceRelation ;
+    sh:property [
+        sh:path :txnCount ;
+        sh:datatype xsd:float ;
+        sh:minInclusive 0 ;
+    ] .
+
+:HierarchyNoSelfLoopShape a sh:NodeShape ;
+    sh:targetClass :HierarchyRelation ;
+    sh:sparql [
+        sh:message "Hierarchy edges must not be self loops." ;
+        sh:select """
+            SELECT $this
+            WHERE {
+                $this :source ?s ;
+                      :target ?t .
+                FILTER(?s = ?t)
+            }
+        """ ;
+    ] .
+
+:ProvenanceConfidenceShape a sh:NodeShape ;
+    sh:targetClass :EdgeProvenance ;
+    sh:property [
+        sh:path :confidence ;
+        sh:datatype xsd:float ;
+        sh:minInclusive 0 ;
+        sh:maxInclusive 1 ;
+    ] .
+
+:RelationRoleCompatibilityShape a sh:NodeShape ;
+    sh:targetClass :Relation ;
+    sh:message "Relation-role compatibility is validated in runtime validator for manifest edges." .
+
+:TemporalInteractionShape a sh:NodeShape ;
+    sh:targetClass :InteractionRule ;
+    sh:message "Temporal interaction lag/order constraints are validated in runtime validator using events." .
+
