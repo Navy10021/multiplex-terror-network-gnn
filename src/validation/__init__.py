@@ -1,9 +1,9 @@
 from .schema import (
     Manifest,
     ManifestValidationError,
+    summarize_manifest,
     validate_manifest_dict,
     validate_manifest_file,
-    summarize_manifest,
 )
 
 __all__ = [

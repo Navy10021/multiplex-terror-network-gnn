@@ -124,7 +124,7 @@ source .venv/bin/activate
 pip install -r requirements.lock
 ```
 
-> Depending on environment, install compatible PyTorch/PyG first.
+> PyTorch/PyG는 환경(CPU/CUDA/Colab)별로 별도 설치가 필요합니다. `docs/INSTALL.md` 설치 레시피를 먼저 확인하세요.
 
 ### End-to-end pipeline
 ```bash
@@ -154,6 +154,14 @@ python -m src.cli.validate_ontology \
   --json
 ```
 
+### Unified CLI (editable install)
+```bash
+pip install -e .
+multiplex-gnn --help
+multiplex-gnn run-all --help
+multiplex-gnn validate-ontology --help
+```
+
 ---
 
 ## 📦 Typical outputs
@@ -167,6 +175,8 @@ A run directory generally includes:
 - `run_metadata.json`
 - `explanations/ontology_explanations.json` (when enabled)
 - `reporting_summary/multitask_linkpred_summary.csv` (when enabled)
+- `DATASET_CARD.md`
+- `MODEL_CARD.md`
 
 ---
 
@@ -188,6 +198,15 @@ for config in easy baseline hard; do
 done
 ```
 
+Quick script version:
+
+```bash
+bash scripts/run_easy_baseline_hard.sh 2025 1500 results/repro_runs
+bash scripts/summarize_all.sh results/repro_runs results/summary_all
+```
+
+See `docs/REPRO.md` for full pipeline details.
+
 ---
 
 ## 📁 Project structure (current)
@@ -204,10 +223,18 @@ multiplex-terror-network-gnn/
 │   ├── generator_easy.json
 │   ├── generator_baseline.json
 │   └── generator_hard.json
+├── scripts/
+│   ├── run_easy_baseline_hard.sh
+│   └── summarize_all.sh
+├── docs/
+│   ├── INSTALL.md
+│   ├── ONTOLOGY_CONTRACT.md
+│   └── REPRO.md
 ├── src/
 │   ├── run_all.py
-│   ├── cli/validate_ontology.py
-│   ├── ontology/{load.py,validator.py}
+│   ├── cli/{main.py,validate_ontology.py}
+│   ├── ontology/{load.py,validator.py,report_schema.py}
+│   ├── reporting/cards.py
 │   ├── data/{multiplex_generator_v3.py,build_pyg_dataset_v3.py,basic_diagnostics_v3.py}
 │   ├── models/{train_multitask_gnn_v3.py,train_linkpred_layer_v3.py,...}
 │   ├── analysis/plot_multitask_linkpred_summary.py
@@ -242,6 +269,8 @@ Contributions are welcome for:
 - interpretability and reporting improvements
 
 Please open an issue/PR with clear experiment settings and reproducibility metadata.
+
+PR quality gate checklist is standardized at `docs/CI_CHECKLIST.md` and automated via `scripts/ci_checklist.sh` in GitHub Actions.
 
 ---
 

@@ -1,1 +1,1 @@
-# ./src/__init__.py
+"""Top-level package for multiplex-terror-network-gnn."""
