@@ -1487,14 +1487,22 @@ def generate_with_ontology_constraints(
     shapes_path: str,
     max_retries: int = 3,
     retry_seed_stride: int = 1,
+    retry_on_rule_ids: Optional[List[str]] = None,
+    retry_on_severities: Optional[List[str]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
     """Generate manifests with ontology-aware retries.
 
     Returns (manifest, ontology_report, telemetry).
-    The returned report is the report from the final attempt (conformant if successful).
+    Retries are governed by:
+    - max_retries
+    - retry_seed_stride
+    - retry_on_rule_ids (empty => any rule can trigger retry)
+    - retry_on_severities (default: ["error", "critical"]) 
     """
     attempts = max(1, int(max_retries))
     stride = max(1, int(retry_seed_stride))
+    target_rules = {str(x).strip() for x in (retry_on_rule_ids or []) if str(x).strip()}
+    target_sev = {str(x).strip() for x in (retry_on_severities or ["error", "critical"]) if str(x).strip()}
 
     telemetry: Dict[str, Any] = {
         "mode": "ontology_constrained",
@@ -1505,6 +1513,12 @@ def generate_with_ontology_constraints(
         "seed_attempts": [],
         "violation_histogram": {},
         "attempt_summaries": [],
+        "retry_policy": {
+            "retry_seed_stride": stride,
+            "retry_on_rule_ids": sorted(list(target_rules)),
+            "retry_on_severities": sorted(list(target_sev)),
+        },
+        "retry_log": [],
     }
 
     last_manifest: Dict[str, Any] | None = None
@@ -1521,6 +1535,21 @@ def generate_with_ontology_constraints(
             strict=False,
         )
 
+        violations = report.get("violations", []) if isinstance(report.get("violations"), list) else []
+        matched = []
+        for v in violations:
+            if not isinstance(v, dict):
+                continue
+            sev = str(v.get("severity", "error"))
+            rid = str(v.get("rule_id", ""))
+            if target_sev and sev not in target_sev:
+                continue
+            if target_rules and rid not in target_rules:
+                continue
+            matched.append(rid)
+
+        should_retry = (not bool(report.get("conforms", False))) and (attempt < attempts - 1) and (len(matched) > 0 or len(target_rules) == 0)
+
         telemetry["attempts"] = int(telemetry["attempts"] + 1)
         telemetry["seed_attempts"].append(seed_i)
         telemetry["attempt_summaries"].append(
@@ -1529,6 +1558,18 @@ def generate_with_ontology_constraints(
                 "seed": seed_i,
                 "conforms": bool(report.get("conforms", False)),
                 "violations_error": int((report.get("counts") or {}).get("violations_error", len(report.get("errors", [])))),
+                "matched_retry_rules": sorted(list(set(matched))),
+                "retry_triggered": bool(should_retry),
+            }
+        )
+
+        telemetry["retry_log"].append(
+            {
+                "attempt": attempt + 1,
+                "seed": seed_i,
+                "conforms": bool(report.get("conforms", False)),
+                "matched_retry_rules": sorted(list(set(matched))),
+                "retry_triggered": bool(should_retry),
             }
         )
 
@@ -1543,6 +1584,9 @@ def generate_with_ontology_constraints(
             return manifest, report, telemetry
 
         telemetry["failed_attempts"] = int(telemetry["failed_attempts"] + 1)
+
+        if not should_retry:
+            break
 
     assert last_manifest is not None and last_report is not None
     return last_manifest, last_report, telemetry
