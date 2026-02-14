@@ -47,6 +47,19 @@ def test_write_run_cards_generates_dataset_and_model_cards(tmp_path: Path):
             {
                 "hvt_threshold_tuned": {"test": {"auc": 0.8, "f1": 0.7}},
                 "fixed_threshold": {"test": {"role_f1_macro": 0.6, "imp_r2": 0.5}},
+                "hvt_calibration": {
+                    "enabled": True,
+                    "method": "temperature",
+                    "temperature": 1.2,
+                    "ece_val_before": 0.2,
+                    "ece_val_after": 0.1,
+                    "brier_val_before": 0.3,
+                    "brier_val_after": 0.25,
+                    "thr_strategy": "f1",
+                    "thr_prevalence": 0.12,
+                    "thr_fpr": 0.01,
+                    "thr_iqr": {"p25": 0.42, "p75": 0.58},
+                },
             }
         ),
         encoding="utf-8",
@@ -62,3 +75,6 @@ def test_write_run_cards_generates_dataset_and_model_cards(tmp_path: Path):
     assert "missing edge rates" in dataset_card
     assert "# MODEL_CARD" in model_card
     assert "HVT auc" in model_card
+    assert "calibration enabled" in model_card
+    assert "validation ECE (before -> after)" in model_card
+    assert "threshold IQR" in model_card

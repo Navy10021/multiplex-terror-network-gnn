@@ -23,6 +23,15 @@ def _cfg_value(cfg: Dict[str, Any], key: str, default: Any = "n/a") -> Any:
     return v if v is not None else default
 
 
+def _delta(before: Any, after: Any) -> str:
+    try:
+        b = float(before)
+        a = float(after)
+        return f"{b:.4f} -> {a:.4f} (Δ={a - b:+.4f})"
+    except Exception:
+        return "n/a"
+
+
 def render_dataset_card(
     manifest: Manifest,
     *,
@@ -124,6 +133,24 @@ def render_model_card(run_dir: str) -> str:
 
     lines.append("## Calibration / threshold")
     lines.append("- HVT metrics use threshold-tuned and fixed-threshold reporting when available in multitask_metrics.json.")
+
+    calib = mt.get("hvt_calibration") if isinstance(mt, dict) else None
+    if isinstance(calib, dict):
+        enabled = bool(calib.get("enabled", False))
+        lines.append(f"- calibration enabled: `{enabled}`")
+        lines.append(f"- method / temperature: `{calib.get('method', 'n/a')}` / `{calib.get('temperature', 'n/a')}`")
+        lines.append(f"- validation ECE (before -> after): `{_delta(calib.get('ece_val_before'), calib.get('ece_val_after'))}`")
+        lines.append(f"- validation Brier (before -> after): `{_delta(calib.get('brier_val_before'), calib.get('brier_val_after'))}`")
+        lines.append(
+            "- threshold strategy: "
+            f"`{calib.get('thr_strategy', 'n/a')}` "
+            f"(prevalence=`{calib.get('thr_prevalence', 'n/a')}`, fpr=`{calib.get('thr_fpr', 'n/a')}`)"
+        )
+        thr_iqr = calib.get("thr_iqr")
+        if isinstance(thr_iqr, dict):
+            lines.append(f"- threshold IQR: p25=`{thr_iqr.get('p25', 'n/a')}`, p75=`{thr_iqr.get('p75', 'n/a')}`")
+    else:
+        lines.append("- calibration summary: `n/a`")
     lines.append("")
 
     lines.append("## Limitations / cautions")

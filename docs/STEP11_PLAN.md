@@ -43,7 +43,7 @@ Ontology rule registry externalization + report schema versioning
 
 ---
 
-## STEP11-3 (이번 PR)
+## STEP11-3
 ### 제목
 Link prediction protocol v2 (temporal split + advanced negatives)
 
@@ -67,7 +67,7 @@ Link prediction protocol v2 (temporal split + advanced negatives)
 
 ---
 
-## STEP11-4
+## STEP11-4 (이번 PR)
 ### 제목
 Model calibration 요약을 MODEL_CARD에 자동 반영
 
@@ -75,3 +75,15 @@ Model calibration 요약을 MODEL_CARD에 자동 반영
 - `src/models/train_multitask_gnn_v3.py`
 - `src/reporting/cards.py`
 - `tests/test_reporting_cards.py`
+
+### 작업
+- multitask metrics 내 `hvt_calibration` 요약을 MODEL_CARD에 자동 표기
+- calibration before/after(ECE, Brier), temperature, threshold 전략/분포(IQR) 반영
+- reporting 카드 테스트 보강
+
+### 완료 조건
+- MODEL_CARD가 calibration 섹션에서 수치 요약을 출력
+- 관련 테스트가 해당 문구/지표를 검증
+
+### 테스트
+- `pytest -q tests/test_reporting_cards.py tests/test_reporting_phase_e.py`
