@@ -1,11 +1,11 @@
 import argparse
 import json
 import os
-from dataclasses import dataclass, asdict, fields, replace
+import random
+from dataclasses import asdict, dataclass, fields, replace
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import random
 
 from src.ontology.validator import (
     OntologyValidationError,
@@ -14,7 +14,6 @@ from src.ontology.validator import (
 )
 from src.utils.exp_logging import build_artifact_dir, collect_run_metadata, write_run_metadata
 from src.validation.schema import validate_manifest_dict
-
 
 # -----------------------------
 # Data class definitions
@@ -170,10 +169,84 @@ def _filter_cfg_dict(d: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in d.items() if k in allowed}
 
 
+
+
+def validate_generator_config(cfg: GeneratorConfig) -> None:
+    """Validate generator config values before generation.
+
+    Raises:
+        ValueError: when a config invariant is violated.
+    """
+
+    def _check_unit_interval(name: str, value: float) -> None:
+        if not (0.0 <= float(value) <= 1.0):
+            raise ValueError(f"{name} must be in [0,1], got {value}")
+
+    if int(cfg.size) <= 0:
+        raise ValueError(f"size must be > 0, got {cfg.size}")
+    if int(cfg.num_days) <= 0:
+        raise ValueError(f"num_days must be > 0, got {cfg.num_days}")
+    if int(cfg.campaign_count) <= 0:
+        raise ValueError(f"campaign_count must be > 0, got {cfg.campaign_count}")
+    if int(cfg.campaign_length) <= 0:
+        raise ValueError(f"campaign_length must be > 0, got {cfg.campaign_length}")
+
+    unit_interval_fields = {
+        "hvt_ratio": cfg.hvt_ratio,
+        "event_burstiness": cfg.event_burstiness,
+        "activity_p_off_to_on": cfg.activity_p_off_to_on,
+        "activity_p_on_to_off": cfg.activity_p_on_to_off,
+        "missing_edge_rate_hierarchy": cfg.missing_edge_rate_hierarchy,
+        "missing_edge_rate_finance": cfg.missing_edge_rate_finance,
+        "missing_edge_rate_communication": cfg.missing_edge_rate_communication,
+        "missing_edge_rate_operation": cfg.missing_edge_rate_operation,
+        "missing_edge_rate_ideology": cfg.missing_edge_rate_ideology,
+        "false_edge_rate_hierarchy": cfg.false_edge_rate_hierarchy,
+        "false_edge_rate_finance": cfg.false_edge_rate_finance,
+        "false_edge_rate_communication": cfg.false_edge_rate_communication,
+        "false_edge_rate_operation": cfg.false_edge_rate_operation,
+        "false_edge_rate_ideology": cfg.false_edge_rate_ideology,
+        "false_edge_event_scale": cfg.false_edge_event_scale,
+        "missing_event_rate_txn": cfg.missing_event_rate_txn,
+        "missing_event_rate_comm": cfg.missing_event_rate_comm,
+        "missing_event_rate_op": cfg.missing_event_rate_op,
+    }
+    for name, value in unit_interval_fields.items():
+        _check_unit_interval(name, float(value))
+
+    min_max_pairs = [
+        ("txn_events", int(cfg.txn_events_min), int(cfg.txn_events_max)),
+        ("comm_events", int(cfg.comm_events_min), int(cfg.comm_events_max)),
+        ("op_events", int(cfg.op_events_min), int(cfg.op_events_max)),
+    ]
+    for label, lo, hi in min_max_pairs:
+        if lo <= 0 or hi <= 0:
+            raise ValueError(f"{label}_min/max must be > 0, got ({lo}, {hi})")
+        if lo > hi:
+            raise ValueError(f"{label}_min must be <= {label}_max, got ({lo}, {hi})")
+
+    if cfg.cross_layer_copy is not None:
+        if not isinstance(cfg.cross_layer_copy, list):
+            raise ValueError("cross_layer_copy must be a list of specs")
+        for i, spec in enumerate(cfg.cross_layer_copy):
+            if not isinstance(spec, dict):
+                raise ValueError(f"cross_layer_copy[{i}] must be an object")
+            src = spec.get("src")
+            dst = spec.get("dst")
+            rate = spec.get("rate", None)
+            if not isinstance(src, str) or not src.strip():
+                raise ValueError(f"cross_layer_copy[{i}].src must be a non-empty string")
+            if not isinstance(dst, str) or not dst.strip():
+                raise ValueError(f"cross_layer_copy[{i}].dst must be a non-empty string")
+            if rate is None:
+                raise ValueError(f"cross_layer_copy[{i}].rate is required")
+            _check_unit_interval(f"cross_layer_copy[{i}].rate", float(rate))
+
 def load_generator_config(config_path: Optional[str], size: int, seed: int) -> GeneratorConfig:
     """Load GeneratorConfig from JSON and override size/seed from CLI."""
     if config_path is None:
         cfg = GeneratorConfig(size=size, seed=seed)
+        validate_generator_config(cfg)
         print("[*] No config file provided. Using default GeneratorConfig.")
         return cfg
 
@@ -183,6 +256,7 @@ def load_generator_config(config_path: Optional[str], size: int, seed: int) -> G
     cfg = GeneratorConfig(**_filter_cfg_dict(cfg_dict))
     cfg.size = size
     cfg.seed = seed
+    validate_generator_config(cfg)
 
     print(f"[*] Loaded GeneratorConfig from {config_path}")
     return cfg
@@ -1487,14 +1561,22 @@ def generate_with_ontology_constraints(
     shapes_path: str,
     max_retries: int = 3,
     retry_seed_stride: int = 1,
+    retry_on_rule_ids: Optional[List[str]] = None,
+    retry_on_severities: Optional[List[str]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
     """Generate manifests with ontology-aware retries.
 
     Returns (manifest, ontology_report, telemetry).
-    The returned report is the report from the final attempt (conformant if successful).
+    Retries are governed by:
+    - max_retries
+    - retry_seed_stride
+    - retry_on_rule_ids (empty => any rule can trigger retry)
+    - retry_on_severities (default: ["error", "critical"]) 
     """
     attempts = max(1, int(max_retries))
     stride = max(1, int(retry_seed_stride))
+    target_rules = {str(x).strip() for x in (retry_on_rule_ids or []) if str(x).strip()}
+    target_sev = {str(x).strip() for x in (retry_on_severities or ["error", "critical"]) if str(x).strip()}
 
     telemetry: Dict[str, Any] = {
         "mode": "ontology_constrained",
@@ -1505,6 +1587,12 @@ def generate_with_ontology_constraints(
         "seed_attempts": [],
         "violation_histogram": {},
         "attempt_summaries": [],
+        "retry_policy": {
+            "retry_seed_stride": stride,
+            "retry_on_rule_ids": sorted(list(target_rules)),
+            "retry_on_severities": sorted(list(target_sev)),
+        },
+        "retry_log": [],
     }
 
     last_manifest: Dict[str, Any] | None = None
@@ -1521,6 +1609,21 @@ def generate_with_ontology_constraints(
             strict=False,
         )
 
+        violations = report.get("violations", []) if isinstance(report.get("violations"), list) else []
+        matched = []
+        for v in violations:
+            if not isinstance(v, dict):
+                continue
+            sev = str(v.get("severity", "error"))
+            rid = str(v.get("rule_id", ""))
+            if target_sev and sev not in target_sev:
+                continue
+            if target_rules and rid not in target_rules:
+                continue
+            matched.append(rid)
+
+        should_retry = (not bool(report.get("conforms", False))) and (attempt < attempts - 1) and (len(matched) > 0 or len(target_rules) == 0)
+
         telemetry["attempts"] = int(telemetry["attempts"] + 1)
         telemetry["seed_attempts"].append(seed_i)
         telemetry["attempt_summaries"].append(
@@ -1529,6 +1632,18 @@ def generate_with_ontology_constraints(
                 "seed": seed_i,
                 "conforms": bool(report.get("conforms", False)),
                 "violations_error": int((report.get("counts") or {}).get("violations_error", len(report.get("errors", [])))),
+                "matched_retry_rules": sorted(list(set(matched))),
+                "retry_triggered": bool(should_retry),
+            }
+        )
+
+        telemetry["retry_log"].append(
+            {
+                "attempt": attempt + 1,
+                "seed": seed_i,
+                "conforms": bool(report.get("conforms", False)),
+                "matched_retry_rules": sorted(list(set(matched))),
+                "retry_triggered": bool(should_retry),
             }
         )
 
@@ -1543,6 +1658,9 @@ def generate_with_ontology_constraints(
             return manifest, report, telemetry
 
         telemetry["failed_attempts"] = int(telemetry["failed_attempts"] + 1)
+
+        if not should_retry:
+            break
 
     assert last_manifest is not None and last_report is not None
     return last_manifest, last_report, telemetry
