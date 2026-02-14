@@ -221,6 +221,8 @@ This order minimizes regression risk and enables measurable gains at each step.
 **Validation**
 - `python -m src.run_all ...` strict + non-strict smoke tests.
 
+- [x] **F2 completed**: explanation JSON now includes rule_chains and confidence_alignment
+
 ### F2 — Explanation quality upgrade (model attribution + ontology chain)
 
 **Actions**

@@ -202,6 +202,8 @@
 - 신규 사용자가 혼란 없이 end-to-end 1회 실행 가능.
 - strict 실패 시 바로 실행 가능한 대응 커맨드가 안내됨.
 
+- [x] **F2 완료/반영**: explanation JSON에 rule_chains + confidence_alignment 반영
+
 ### F2 — 설명 품질 고도화 (모델 attribution + 규칙 체인)
 
 **작업**

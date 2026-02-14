@@ -41,6 +41,81 @@ from src.validation.schema import Manifest, validate_manifest_dict
 
 
 
+
+
+def _safe_int(x: Any, default: int = -1) -> int:
+    try:
+        return int(x)
+    except Exception:
+        return int(default)
+
+
+def _safe_float(x: Any, default: float = 0.0) -> float:
+    try:
+        return float(x)
+    except Exception:
+        return float(default)
+
+
+def _build_node_maps(manifest: Dict[str, Any]) -> Dict[str, Dict[int, Any]]:
+    nodes = manifest.get("nodes", []) if isinstance(manifest.get("nodes"), list) else []
+    node_attrs: Dict[int, Dict[str, Any]] = {}
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        nid = _safe_int(n.get("id", n.get("node_id", -1)), default=-1)
+        if nid < 0:
+            continue
+        node_attrs[nid] = n
+    return {"node_attrs": node_attrs}
+
+
+def _compute_rule_scores(
+    target_violations: List[Dict[str, Any]],
+    global_report: Dict[str, Any],
+) -> Dict[str, Any]:
+    constraints = global_report.get("constraints_checked", []) if isinstance(global_report.get("constraints_checked"), list) else []
+    violated_checks = sorted(list({str(v.get("check")) for v in target_violations if v.get("check") is not None}))
+    satisfied_checks = [c for c in constraints if c not in violated_checks]
+
+    # heuristic rule score: fewer target violations => higher rule consistency
+    denom = max(1.0, float(len(constraints) if constraints else 3))
+    rule_score = max(0.0, 1.0 - (float(len(violated_checks)) / denom))
+    return {
+        "violated_checks": violated_checks,
+        "satisfied_checks": satisfied_checks,
+        "rule_score": float(rule_score),
+    }
+
+
+def _compute_model_proxy(node: Dict[str, Any], local_degree: int, max_degree: int) -> Dict[str, Any]:
+    # F2: still proxy-based, but now multi-signal and explicit.
+    imp = _safe_float(node.get("importance_score", 0.0), default=0.0)
+    hvt_flag = 1.0 if bool(node.get("high_value_target", 0)) else 0.0
+    skill = _safe_float(node.get("skill_level", 0.0), default=0.0)
+    rad = _safe_float(node.get("radicalization", 0.0), default=0.0)
+
+    deg_norm = float(local_degree) / float(max(1, max_degree))
+    # bounded to [0,1] with lightweight normalization
+    imp_norm = max(0.0, min(1.0, imp / 100.0))
+    skill_norm = max(0.0, min(1.0, skill))
+    rad_norm = max(0.0, min(1.0, rad))
+
+    model_prob = 0.35 * deg_norm + 0.35 * imp_norm + 0.15 * skill_norm + 0.15 * rad_norm
+    model_prob = max(0.0, min(1.0, model_prob + 0.1 * hvt_flag))
+
+    return {
+        "proxy_signal": "multi_signal_proxy",
+        "proxy_components": {
+            "degree_norm": float(deg_norm),
+            "importance_norm": float(imp_norm),
+            "skill_norm": float(skill_norm),
+            "radicalization_norm": float(rad_norm),
+            "hvt_flag": float(hvt_flag),
+        },
+        "proxy_probability": float(model_prob),
+    }
+
 def _build_node_explanations(manifest: Dict[str, Any], ontology_report: Dict[str, Any], top_k: int = 25) -> List[Dict[str, Any]]:
     nodes = manifest.get("nodes", []) if isinstance(manifest.get("nodes"), list) else []
     layers = manifest.get("layers", {}) if isinstance(manifest.get("layers"), dict) else {}
@@ -52,10 +127,9 @@ def _build_node_explanations(manifest: Dict[str, Any], ontology_report: Dict[str
         if not isinstance(layer_obj, dict):
             continue
         for e in (layer_obj.get("edges", []) or []):
-            try:
-                u = int(e.get("source"))
-                v = int(e.get("target"))
-            except Exception:
+            u = _safe_int(e.get("source"), default=-1)
+            v = _safe_int(e.get("target"), default=-1)
+            if u < 0 or v < 0:
                 continue
             degree[u] = degree.get(u, 0) + 1
             degree[v] = degree.get(v, 0) + 1
@@ -68,9 +142,8 @@ def _build_node_explanations(manifest: Dict[str, Any], ontology_report: Dict[str
         if not isinstance(affected, list):
             continue
         for aid in affected:
-            try:
-                nid = int(aid)
-            except Exception:
+            nid = _safe_int(aid, default=-1)
+            if nid < 0:
                 continue
             node_viol.setdefault(nid, []).append({
                 "check": v.get("check"),
@@ -79,29 +152,54 @@ def _build_node_explanations(manifest: Dict[str, Any], ontology_report: Dict[str
                 "message": v.get("message", ""),
             })
 
-    ranked = sorted(nodes, key=lambda n: degree.get(int(n.get("id", n.get("node_id", -1))), 0), reverse=True)
+    maps = _build_node_maps(manifest)
+    node_attrs = maps["node_attrs"]
+    max_degree = max(degree.values()) if degree else 1
+
+    ranked = sorted(nodes, key=lambda n: degree.get(_safe_int(n.get("id", n.get("node_id", -1)), default=-1), 0), reverse=True)
     selected = ranked[:max(1, int(top_k))]
     out: List[Dict[str, Any]] = []
     for n in selected:
-        nid = int(n.get("id", n.get("node_id", -1)))
+        nid = _safe_int(n.get("id", n.get("node_id", -1)), default=-1)
+        if nid < 0:
+            continue
         neigh = sorted(list(neighbors.get(nid, set())))[:15]
         nv = node_viol.get(nid, [])
+        node_obj = node_attrs.get(nid, n)
+
+        model_proxy = _compute_model_proxy(node_obj, local_degree=int(degree.get(nid, 0)), max_degree=max_degree)
+        rule_bundle = _compute_rule_scores(nv, ontology_report)
+        confidence_alignment = 1.0 - abs(float(model_proxy["proxy_probability"]) - float(rule_bundle["rule_score"]))
+        confidence_alignment = max(0.0, min(1.0, confidence_alignment))
+
         out.append({
             "target": nid,
             "task": "hvt_risk_screening",
             "model_evidence": {
-                "proxy_signal": "local_degree",
+                "proxy_source": "manifest_signals",
                 "local_degree": int(degree.get(nid, 0)),
                 "top_neighbors": neigh,
+                **model_proxy,
             },
             "ontology_evidence": {
                 "conforms_global": bool(ontology_report.get("conforms", False)),
                 "violations_for_target": nv,
                 "violation_count_for_target": len(nv),
+                "rule_chains": {
+                    "violated": rule_bundle["violated_checks"],
+                    "satisfied": rule_bundle["satisfied_checks"],
+                },
+                "rule_score": float(rule_bundle["rule_score"]),
+            },
+            "confidence_alignment": {
+                "model_proxy_probability": float(model_proxy["proxy_probability"]),
+                "rule_score": float(rule_bundle["rule_score"]),
+                "alignment_score": float(confidence_alignment),
             },
             "conflict_flags": {
                 "rule_violation_for_target": bool(nv),
                 "global_nonconformance": not bool(ontology_report.get("conforms", False)),
+                "model_rule_mismatch": bool(confidence_alignment < 0.5),
             },
         })
     return out

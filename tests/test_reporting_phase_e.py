@@ -91,3 +91,7 @@ def test_build_node_explanations_maps_violations_to_targets():
     exp0 = [e for e in exps if e["target"] == 0][0]
     assert exp0["ontology_evidence"]["violation_count_for_target"] == 1
     assert exp0["conflict_flags"]["rule_violation_for_target"] is True
+    assert "rule_chains" in exp0["ontology_evidence"]
+    assert "violated" in exp0["ontology_evidence"]["rule_chains"]
+    assert "confidence_alignment" in exp0
+    assert 0.0 <= float(exp0["confidence_alignment"]["alignment_score"]) <= 1.0
