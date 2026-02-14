@@ -23,7 +23,6 @@ from src.data.basic_diagnostics_v3 import (
     layer_overlap_diagnostics,
     rolewise_degree_stats,
 )
-from src.data.build_pyg_dataset_v3 import build_pyg_data
 from src.analysis.plot_multitask_linkpred_summary import build_runs_dataframe
 from src.data.multiplex_generator_v3 import (
     generate_multiplex_with_config,
@@ -440,6 +439,8 @@ def main() -> None:
 
     dataset_path: Optional[str] = None
     if not args.skip_build:
+        from src.data.build_pyg_dataset_v3 import build_pyg_data
+
         dataset_path = os.path.join(run_dir, "pyg_data.pt")
         data = build_pyg_data(manifest_path)
         import torch
