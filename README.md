@@ -244,7 +244,7 @@ python -m src.cli.validate_ontology \
 - **Model Zoo**: add ontology-aware losses (role–relation compatibility, transitivity, temporal consistency).
 - **Reporting**: add ontology compliance/violation metrics and rule-grounded explanation outputs per node.
 
-Detailed forward plan is maintained in `PLANE.md` (ontology-centered roadmap only).
+Detailed forward plans are maintained in `PLANS.md` (EN) and `PLANS_KOR.md` (KO), focused on next-stage ontology-driven code evolution.
 
 This exits non-zero on any schema error and prints node/edge/layer/event counts when `--summary` is provided.
 

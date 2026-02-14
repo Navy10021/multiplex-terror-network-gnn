@@ -1,118 +1,189 @@
-# Ontology-based Validation Layer Plan
+# Ontology-Centered Development Plan (PLANS)
 
-## Ask mode: repository tracing
-
-### 1) Data generator location
-- Primary generator (v3): `src/data/multiplex_generator_v3.py`
-  - Core generation entrypoint: `generate_multiplex_with_config(cfg)`
-  - CLI entrypoint: `main()` with `--config/--size/--seed/...`
-  - Current validation hook: calls `validate_manifest_dict` before writing manifest.
-
-### 2) Data format / schema location
-- Manifest schema + validation CLI: `src/validation/schema.py`
-  - Pydantic models for `Manifest`, `Node`, `Layer`, `Edge`, `Event`
-  - `validate_manifest_dict`, `validate_manifest_file`, `summarize_manifest`
-  - CLI: `python -m src.validation.schema <manifest.json> --summary`
-- Existing tests for schema behavior:
-  - `tests/test_manifest_validation.py`
-
-### 3) Training / pipeline locations
-- End-to-end pipeline entrypoint: `src/run_all.py`
-  - Flow: generator v3 -> schema validation -> PyG builder -> diagnostics -> metadata/card.
-- Dataset builder (v3): `src/data/build_pyg_dataset_v3.py`
-- Main training scripts:
-  - Multi-task: `src/models/train_multitask_gnn_v3.py`
-  - HVT: `src/models/train_hvt_gnn_v3.py`
-  - Layer link prediction: `src/models/train_linkpred_layer_v3.py`
+This document is a forward engineering plan focused on upgrading this repository into a stronger
+**ontology-driven synthetic terror-network research stack**.
 
 ---
 
-## Goal redefinition (fixed, architecture guardrails)
-1. **Generation quality/consistency**: enforce domain constraints so synthetic graphs are structurally plausible.
-2. **Domain-knowledge injection path**: represent relation semantics in machine-readable form that can later feed features/losses.
-3. **Explainability/provenance**: preserve evidence/provenance context so rule-grounded explanations can be attached later.
+## 1) Current codebase checkpoint (as-is audit)
+
+### 1.1 Generator / Data format / Pipeline map
+- Generator v3: `src/data/multiplex_generator_v3.py`
+- Manifest schema/validator: `src/validation/schema.py`
+- Ontology validator and loader:
+  - `src/ontology/load.py`
+  - `src/ontology/validator.py`
+  - `src/cli/validate_ontology.py`
+- Pipeline orchestration: `src/run_all.py`
+- PyG builder v3: `src/data/build_pyg_dataset_v3.py`
+- Training:
+  - `src/models/train_multitask_gnn_v3.py`
+  - `src/models/train_hvt_gnn_v3.py`
+  - `src/models/train_linkpred_layer_v3.py`
+- Diagnostics/reporting:
+  - `src/data/basic_diagnostics_v3.py`
+  - `src/analysis/plot_multitask_linkpred_summary.py`
+
+### 1.2 Verified baseline health
+- Full tests pass.
+- `run_all` and ontology CLI entrypoints are healthy (`--help` works).
+- Ontology artifacts are integrated in generator + run pipeline.
 
 ---
 
-## Implementation roadmap (commit-friendly phases)
+## 2) Strategic objective (next milestone)
 
-## Phase 1 — Ontology schema + CLI validation skeleton
+Upgrade from “ontology-checked manifests” to “ontology-guided generation/training/reporting”:
+
+1. **Generation validity**: constrain generation with ontology rules, not just post-hoc checks.
+2. **Model learning signal**: expose ontology semantics as train-time priors/losses.
+3. **Evaluation explainability**: report performance with rule conformance and evidence grounding.
+
+---
+
+## 3) Phase plan (implementation-ready)
+
+## Phase A — Validator depth expansion
 
 ### Scope
-- Add ontology artifacts using OWL + SHACL dual-track:
-  - `ontology/terror.ttl`
-  - `ontology/constraints.shacl.ttl`
-- Add CLI entrypoint for ontology checks (manifest -> ontology validation report).
+- Strengthen ontology contract and runtime checks:
+  - relation-role compatibility tables
+  - temporal window checks by layer interaction
+  - provenance consistency (false/copy/confidence)
+- Extend report schema:
+  - `errors_by_check` (already present) + severity + affected_ids
+  - violation histogram by rule key
 
-### Files
-- New: `ontology/terror.ttl`
-- New: `ontology/constraints.shacl.ttl`
-- New: `src/cli/validate_ontology.py`
-- New/updated package init files if needed (`src/cli/__init__.py`)
-- New tests: `tests/test_ontology_cli.py`
+### Target files
+- `src/ontology/validator.py`
+- `ontology/constraints.shacl.ttl`
+- `tests/test_ontology_validator.py`
 
-### DoD
-- CLI runs on a valid manifest and exits `0`.
-- CLI reports non-conformance and exits non-zero on invalid manifest.
-- Ontology includes Actor/Role/Relation/Event/Evidence(+provenance) concept scaffolding.
+### Definition of done
+- Validation report includes machine-usable violation breakdown.
+- New checks have pass/fail test coverage.
 
-### Test commands
-- `pytest -q tests/test_ontology_cli.py`
-
----
-
-## Phase 2 — Validator implementation (manifest -> RDF + SHACL)
-
-### Scope
-- Implement ontology validator module:
-  - Parse manifest JSON
-  - Convert to RDF triples aligned with ontology vocabulary
-  - Run SHACL checks via `pyshacl`
-  - Return structured validation report
-
-### Files
-- New: `src/ontology/load.py` (ontology/shapes loader helpers)
-- New: `src/ontology/validator.py` (conversion + SHACL engine)
-- New: `src/ontology/__init__.py`
-- Update: `src/cli/validate_ontology.py`
-- New tests: `tests/test_ontology_validator.py`
-- Update dependencies: `requirements.txt` (rdflib/pyshacl)
-
-### DoD
-- Programmatic API validates manifest dictionaries/files.
-- SHACL violations surfaced with readable messages.
-- Unit tests cover pass/fail validation paths.
-
-### Test commands
+### Validation commands
 - `pytest -q tests/test_ontology_validator.py tests/test_ontology_cli.py`
 
 ---
 
-## Phase 3 — Generator v3 integration
+## Phase B — Generator v3 constraint-aware generation
 
 ### Scope
-- Integrate ontology validation immediately after generator manifest assembly.
-- Add config/CLI flag to control strict enforcement (fail-fast default).
-- Emit compact ontology validation report artifact.
+- Add optional constrained generation mode:
+  - rejection/resampling on hard rule violations
+  - bounded retries + fallback strategy logging
+- Emit generation-time repair telemetry:
+  - number of retries
+  - repaired rule categories
 
-### Files
-- Update: `src/data/multiplex_generator_v3.py`
-- (Optional) Update: `src/run_all.py` for same flag propagation
-- New tests: `tests/test_generator_ontology_integration.py`
-- Update docs: `README.md` (new validation command + generator behavior)
+### Target files
+- `src/data/multiplex_generator_v3.py`
+- `src/run_all.py`
+- `tests/test_generator_ontology_integration.py`
 
-### DoD
-- `multiplex_generator_v3` runs ontology validation by default.
-- Invalid manifest in strict mode fails with actionable error.
-- Optional bypass flag exists for debugging/backward compatibility.
+### Definition of done
+- Constrained mode yields ontology-conformant manifests under strict mode.
+- Telemetry is present in `ontology_validation_report.json` and/or metadata.
 
-### Test commands
-- `pytest -q tests/test_generator_ontology_integration.py`
-- `pytest -q tests/test_manifest_validation.py tests/test_ontology_validator.py tests/test_ontology_cli.py`
+### Validation commands
+- `pytest -q tests/test_generator_ontology_integration.py tests/test_manifest_validation.py`
 
 ---
 
-## Out-of-scope for this implementation batch (future)
-- Ontology-aware training losses in `train_multitask_gnn_v3.py`.
-- Reasoner-based enrichment and explanation object export.
-- Statistical diagnostics layer coupled to ontology constraints.
+## Phase C — PyG builder ontology bridge hardening
+
+### Scope
+- Expand ontology-derived tensors:
+  - edge semantics (logical + temporal + provenance)
+  - role-compatibility masks for training constraints
+- Add consistency assertions between manifest ontology payload and tensor outputs.
+
+### Target files
+- `src/data/build_pyg_dataset_v3.py`
+- `tests/test_build_pyg_ontology_bridge.py`
+
+### Definition of done
+- Data object stores reproducible ontology tensors/masks.
+- Builder tests verify shape/value contracts.
+
+### Validation commands
+- `pytest -q tests/test_build_pyg_ontology_bridge.py`
+
+---
+
+## Phase D — Model Zoo ontology-aware learning
+
+### Scope
+- Introduce optional ontology losses in multitask model:
+  - role-relation compatibility loss
+  - hierarchy transitivity consistency penalty
+  - temporal ordering penalty
+- Add CLI flags for ablation:
+  - `--ontology_loss_*` toggles and weights
+
+### Target files
+- `src/models/train_multitask_gnn_v3.py`
+- (Optional) shared utility under `src/models/` for ontology regularizers
+- tests (unit/integration where feasible)
+
+### Definition of done
+- Training script supports ontology-loss ablations without breaking legacy runs.
+- Metrics JSON captures ontology-loss settings.
+
+### Validation commands
+- smoke: `python -m src.models.train_multitask_gnn_v3 --help`
+- smoke train: 1-epoch tiny run on generated sample
+
+---
+
+## Phase E — Experiment/reporting integration
+
+### Scope
+- Extend summary pipeline with ontology metrics:
+  - conformance rate
+  - violations per 1k edges/events
+  - provenance noise indicators
+- Add explanation-ready outputs (JSON) for node-level predictions:
+  - model evidence + rule evidence + conflict flags
+
+### Target files
+- `src/analysis/plot_multitask_linkpred_summary.py`
+- `src/run_all.py`
+- `README.md`
+
+### Definition of done
+- Summary CSV/plots include ontology-aware columns.
+- Example explanation artifact documented in README.
+
+### Validation commands
+- summary script smoke with at least 1 run directory
+
+---
+
+## 4) Cross-cutting engineering requirements
+
+1. **Backward compatibility**
+   - Existing commands remain valid by default.
+   - New ontology modes are opt-in unless explicitly migrated.
+
+2. **Reproducibility**
+   - Persist ontology/shapes path and hash in run metadata.
+   - Version ontology payload (`ontology.version`) and validator checkset.
+
+3. **Test policy**
+   - Every phase adds/updates tests.
+   - Keep full suite green before merge.
+
+---
+
+## 5) Suggested near-term execution order
+
+1. Phase A (validator depth)  
+2. Phase B (generator constraint mode)  
+3. Phase C (builder tensor bridge)  
+4. Phase D (ontology-aware losses)  
+5. Phase E (reporting + explanation)
+
+This order minimizes regression risk and enables measurable gains at each step.
