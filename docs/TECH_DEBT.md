@@ -17,6 +17,22 @@
 
 ---
 
+## STEP 1~3 진행 반영
+
+- 완료: STEP 1 (툴링 표준화)
+  - `pyproject.toml` 추가 (ruff/black/isort/mypy 설정)
+  - `.pre-commit-config.yaml` 추가
+  - 한 줄 Python 파일(`src/__init__.py`, `src/cli/__init__.py`, `src/utils/__init__.py`) 멀티라인 정리
+- 완료: STEP 2 (CI)
+  - `.github/workflows/ci.yml` 추가
+  - Python 3.10/3.11 matrix + `ruff`, `mypy`, `pytest -q`
+- 완료: STEP 3 (의존성 재현성)
+  - `requirements.txt`를 최소 범위 지정 중심으로 재구성
+  - `requirements.lock` 신설 (OS/CUDA 독립 의존성만 고정)
+  - `docs/INSTALL.md` 신설 (CPU/CUDA/Colab 설치 레시피)
+
+---
+
 ## A. 코드 스타일/포맷 문제 (특히 한 줄 파일)
 
 ### A-1) 포맷터/린터 설정 부재

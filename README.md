@@ -124,7 +124,7 @@ source .venv/bin/activate
 pip install -r requirements.lock
 ```
 
-> Depending on environment, install compatible PyTorch/PyG first.
+> PyTorch/PyG는 환경(CPU/CUDA/Colab)별로 별도 설치가 필요합니다. `docs/INSTALL.md` 설치 레시피를 먼저 확인하세요.
 
 ### End-to-end pipeline
 ```bash
