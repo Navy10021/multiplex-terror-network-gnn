@@ -109,6 +109,99 @@ def load_linkpred_metrics(run_dir: str, layer: str, neg_mode: str) -> Dict[str, 
     }
 
 
+
+
+def load_ontology_report_metrics(run_dir: str) -> Dict[str, Any]:
+    """Load ontology_validation_report.json and expose summary-friendly metrics."""
+    rep = _read_json(os.path.join(run_dir, "ontology_validation_report.json")) or {}
+    mani = _read_json(os.path.join(run_dir, "multiplex.json")) or {}
+
+    layers = mani.get("layers", {}) if isinstance(mani.get("layers"), dict) else {}
+    total_edges = 0
+    for _, layer_obj in layers.items():
+        if isinstance(layer_obj, dict) and isinstance(layer_obj.get("edges"), list):
+            total_edges += len(layer_obj.get("edges") or [])
+
+    events = mani.get("events", []) if isinstance(mani.get("events"), list) else []
+
+    violations_total = _float_or_nan(rep.get("violations_total", np.nan))
+    if not np.isfinite(violations_total):
+        violations_total = _float_or_nan(len(rep.get("violations", []) if isinstance(rep.get("violations"), list) else []))
+
+    denom_edges = max(float(total_edges), 1.0)
+    denom_events = max(float(len(events)), 1.0)
+
+    return {
+        "ontology_conforms": 1.0 if bool(rep.get("conforms", False)) else 0.0,
+        "ontology_violations_total": violations_total,
+        "ontology_violations_per_1k_edges": float(1000.0 * violations_total / denom_edges) if np.isfinite(violations_total) else np.nan,
+        "ontology_violations_per_1k_events": float(1000.0 * violations_total / denom_events) if np.isfinite(violations_total) else np.nan,
+    }
+
+
+def load_ontology_loss_metrics(mt_raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Expose ontology-loss training settings from multitask_metrics.json."""
+    if not isinstance(mt_raw, dict):
+        return {
+            "ontology_loss_enabled": np.nan,
+            "ontology_loss_role": np.nan,
+            "ontology_loss_transitivity": np.nan,
+            "ontology_loss_temporal": np.nan,
+        }
+
+    onto = mt_raw.get("ontology_loss", {}) if isinstance(mt_raw.get("ontology_loss"), dict) else {}
+    final_losses = onto.get("final_epoch_losses", {}) if isinstance(onto.get("final_epoch_losses"), dict) else {}
+    return {
+        "ontology_loss_enabled": 1.0 if bool(onto.get("enabled", False)) else 0.0,
+        "ontology_loss_role": _float_or_nan(final_losses.get("role_relation_compatibility", np.nan)),
+        "ontology_loss_transitivity": _float_or_nan(final_losses.get("hierarchy_transitivity", np.nan)),
+        "ontology_loss_temporal": _float_or_nan(final_losses.get("temporal_ordering", np.nan)),
+    }
+
+
+
+def load_run_metadata_metrics(run_dir: str) -> Dict[str, Any]:
+    meta = _read_json(os.path.join(run_dir, "run_metadata.json")) or {}
+    return {
+        "ontology_mode_resolved": str(meta.get("ontology_mode_resolved", "unknown")),
+        "ontology_strict_mode": 1.0 if bool(meta.get("ontology_strict_mode", False)) else 0.0,
+    }
+
+
+def build_benchmark_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Build compact benchmark table for F3 comparisons.
+
+    Comparison keys:
+      - ontology_mode_resolved (strict/constrained/report_only)
+      - ontology_loss_enabled (0/1)
+    """
+    if df.empty:
+        return pd.DataFrame()
+
+    working = df.copy()
+    if "ontology_mode_resolved" not in working.columns:
+        working["ontology_mode_resolved"] = "unknown"
+    if "ontology_loss_enabled" not in working.columns:
+        working["ontology_loss_enabled"] = np.nan
+
+    group_cols = ["difficulty", "ontology_mode_resolved", "ontology_loss_enabled"]
+    metric_cols = [
+        "hvt_f1",
+        "hvt_auc",
+        "role_f1_macro",
+        "imp_r2",
+        "ontology_conforms",
+        "ontology_violations_per_1k_edges",
+        "ontology_violations_per_1k_events",
+        "finance_auc_uniform",
+        "comm_auc_uniform",
+    ]
+    metric_cols = [c for c in metric_cols if c in working.columns]
+
+    agg = working.groupby(group_cols, dropna=False)[metric_cols].mean(numeric_only=True).reset_index()
+    agg["n_runs"] = working.groupby(group_cols, dropna=False).size().values
+    return agg.sort_values(["difficulty", "ontology_mode_resolved", "ontology_loss_enabled"]).reset_index(drop=True)
+
 def load_generator_config(run_dir: str, mt_raw: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Prefer config snapshot embedded into multitask_metrics.json (if available),
@@ -242,6 +335,10 @@ def build_runs_dataframe(run_dirs: List[str], difficulty_mode: str = "auto") -> 
         lp_comm_uniform = load_linkpred_metrics(run_dir, layer="communication", neg_mode="uniform")
         lp_comm_hard = load_linkpred_metrics(run_dir, layer="communication", neg_mode="hard_region")
 
+        onto_report = load_ontology_report_metrics(run_dir)
+        onto_loss = load_ontology_loss_metrics(mt_raw)
+        run_meta = load_run_metadata_metrics(run_dir)
+
         row = {
             "run_dir": run_dir,
             "run_name": run_name,
@@ -253,6 +350,12 @@ def build_runs_dataframe(run_dirs: List[str], difficulty_mode: str = "auto") -> 
             "hvt_auc": mt_metrics.get("hvt_auc", np.nan),
             "role_f1_macro": mt_metrics.get("role_f1_macro", np.nan),
             "imp_r2": mt_metrics.get("imp_r2", np.nan),
+            # ontology reporting
+            **onto_report,
+            # ontology loss diagnostics
+            **onto_loss,
+            # run metadata diagnostics
+            **run_meta,
             # linkpred - finance
             "finance_auc_uniform": lp_fin_uniform["auc"],
             "finance_ap_uniform": lp_fin_uniform["ap"],
@@ -308,6 +411,14 @@ def build_aggregated_dataframe(df_runs: pd.DataFrame) -> pd.DataFrame:
         "hvt_auc",
         "role_f1_macro",
         "imp_r2",
+        "ontology_conforms",
+        "ontology_violations_total",
+        "ontology_violations_per_1k_edges",
+        "ontology_violations_per_1k_events",
+        "ontology_loss_enabled",
+        "ontology_loss_role",
+        "ontology_loss_transitivity",
+        "ontology_loss_temporal",
         "finance_auc_uniform",
         "finance_ap_uniform",
         "finance_auc_hard_region",
@@ -367,6 +478,8 @@ def plot_bar_hvt_metrics(df: pd.DataFrame, out_dir: str):
         ("hvt_auc", "HVT AUC", "HVT AUC by difficulty", "hvt_auc_by_difficulty.png"),
         ("role_f1_macro", "Role F1 (macro)", "Role F1 (macro) by difficulty", "role_f1_macro_by_difficulty.png"),
         ("imp_r2", "Importance R2", "Importance R2 by difficulty", "imp_r2_by_difficulty.png"),
+        ("ontology_conforms", "Ontology conformance rate", "Ontology conformance by difficulty", "ontology_conformance_by_difficulty.png"),
+        ("ontology_violations_per_1k_edges", "Violations / 1k edges", "Ontology violations per 1k edges", "ontology_violations_per_1k_edges.png"),
     ]:
         y, yerr = _get_series(df, metric)
         plt.figure()
@@ -497,6 +610,11 @@ def main():
         action="store_true",
         help="If set, also save the per-run CSV (useful for debugging).",
     )
+    parser.add_argument(
+        "--write_benchmark_table",
+        action="store_true",
+        help="If set, write compact F3 benchmark table (CSV/Markdown).",
+    )
 
     args = parser.parse_args()
 
@@ -515,6 +633,22 @@ def main():
         runs_csv = os.path.join(out_dir, "multitask_linkpred_summary_runs.csv")
         df_runs.to_csv(runs_csv, index=False)
         print(f"[*] Saved per-run CSV: {runs_csv}")
+
+
+    if args.write_benchmark_table:
+        bench_df = build_benchmark_table(df_runs)
+        bench_csv = os.path.join(out_dir, "ontology_benchmark_table.csv")
+        bench_md = os.path.join(out_dir, "ontology_benchmark_table.md")
+        bench_df.to_csv(bench_csv, index=False)
+        with open(bench_md, "w", encoding="utf-8") as f:
+            try:
+                f.write(bench_df.to_markdown(index=False))
+            except Exception:
+                # fallback when optional 'tabulate' dependency is unavailable
+                f.write(bench_df.to_csv(index=False))
+            f.write("\n")
+        print(f"[*] Saved benchmark table CSV: {bench_csv}")
+        print(f"[*] Saved benchmark table MD: {bench_md}")
 
     if args.aggregate:
         df_plot = build_aggregated_dataframe(df_runs)

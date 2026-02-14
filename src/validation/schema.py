@@ -37,6 +37,9 @@ class Edge(BaseModel):
     is_false: Optional[int] = None
     copied_from: Optional[str] = None
 
+    class Config:
+        extra = "allow"
+
 
 class Layer(BaseModel):
     directed: bool
