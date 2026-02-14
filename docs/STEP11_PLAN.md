@@ -31,7 +31,7 @@ Generator config validation 계층 추가
 
 ---
 
-## STEP11-2
+## STEP11-2 (이번 PR)
 ### 제목
 Ontology rule registry externalization + report schema versioning
 

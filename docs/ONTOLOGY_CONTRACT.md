@@ -20,6 +20,11 @@
   - provenance 일관성 검사 (`is_false`, `copied_from`, `confidence`)
   - temporal interaction ordering/lag 제약
 
+## Runtime rule registry
+
+- `src/ontology/validator.py`는 `RULE_REGISTRY`를 통해 check 이름과 실행 함수를 매핑한다.
+- 새로운 규칙은 registry에 함수만 추가하면 report 집계(`violations_by_check`, `errors_by_check`)에 자동 반영된다.
+
 ## Rule catalog
 
 | rule_id | severity | message template | affected_ids |
@@ -40,6 +45,7 @@
 ## Validator report JSON schema (fixed)
 - 코드: `src/ontology/report_schema.py`
 - 최상위 필드:
+  - `schema_version: str` (현재 `1.1.0`)
   - `conforms: bool`
   - `constraints_checked: int`
   - `errors: list[str]`

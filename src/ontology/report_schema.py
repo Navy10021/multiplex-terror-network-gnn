@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 from pydantic import BaseModel, Field, validator
 
 _ALLOWED_SEVERITIES = {"error", "warn", "warning", "info", "critical"}
+ONTOLOGY_REPORT_SCHEMA_VERSION = "1.1.0"
 
 
 class OntologyViolation(BaseModel):
@@ -30,6 +31,7 @@ class OntologyReportCounts(BaseModel):
 
 
 class OntologyReport(BaseModel):
+    schema_version: str = ONTOLOGY_REPORT_SCHEMA_VERSION
     conforms: bool
     constraints_checked: int
     errors: List[str] = Field(default_factory=list)
@@ -39,6 +41,14 @@ class OntologyReport(BaseModel):
     violation_histogram: Dict[str, int] = Field(default_factory=dict)
     assets: Dict[str, str] = Field(default_factory=dict)
     counts: OntologyReportCounts
+
+    @validator("schema_version")
+    def _schema_version_allowed(cls, v: str) -> str:
+        if str(v) != ONTOLOGY_REPORT_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported schema_version '{v}' (expected '{ONTOLOGY_REPORT_SCHEMA_VERSION}')"
+            )
+        return str(v)
 
 
 def validate_ontology_report_schema(report: Dict[str, Any]) -> Dict[str, Any]:

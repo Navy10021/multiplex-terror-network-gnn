@@ -41,6 +41,60 @@ _REQUIRED_SHAPES_TERMS = (
 )
 
 
+def _check_ontology_contract(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del manifest, manifest_dict
+    ontology_text = _read_text(assets["ontology"])
+    shapes_text = _read_text(assets["shapes"])
+    return _validate_ontology_contract(ontology_text, shapes_text)
+
+
+def _check_roles(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del assets, manifest_dict
+    return _validate_roles(manifest)
+
+
+def _check_hierarchy(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del assets, manifest_dict
+    return _validate_hierarchy(manifest)
+
+
+def _check_finance(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del assets, manifest_dict
+    return _validate_finance(manifest)
+
+
+def _check_events(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del assets, manifest_dict
+    return _validate_events(manifest)
+
+
+def _check_relation_role_compatibility(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del assets, manifest_dict
+    return _validate_relation_role_compatibility(manifest)
+
+
+def _check_provenance(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del assets, manifest_dict
+    return _validate_provenance(manifest)
+
+
+def _check_temporal_interactions(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    del assets
+    return _validate_temporal_interactions(manifest, manifest_dict)
+
+
+RULE_REGISTRY = {
+    "ontology_contract": _check_ontology_contract,
+    "roles": _check_roles,
+    "hierarchy": _check_hierarchy,
+    "finance": _check_finance,
+    "events": _check_events,
+    "relation_role_compatibility": _check_relation_role_compatibility,
+    "provenance": _check_provenance,
+    "temporal_interactions": _check_temporal_interactions,
+}
+
+
 def _read_text(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
@@ -442,18 +496,9 @@ def _validate_temporal_interactions(manifest: Manifest, manifest_dict: Dict[str,
 
 
 def _build_report(manifest: Manifest, assets: Dict[str, str], manifest_dict: Dict[str, Any]) -> Dict[str, Any]:
-    ontology_text = _read_text(assets["ontology"])
-    shapes_text = _read_text(assets["shapes"])
-
     checks: Dict[str, List[Dict[str, Any]]] = {
-        "ontology_contract": _validate_ontology_contract(ontology_text, shapes_text),
-        "roles": _validate_roles(manifest),
-        "hierarchy": _validate_hierarchy(manifest),
-        "finance": _validate_finance(manifest),
-        "events": _validate_events(manifest),
-        "relation_role_compatibility": _validate_relation_role_compatibility(manifest),
-        "provenance": _validate_provenance(manifest),
-        "temporal_interactions": _validate_temporal_interactions(manifest, manifest_dict),
+        check_name: rule_fn(manifest, assets, manifest_dict)
+        for check_name, rule_fn in RULE_REGISTRY.items()
     }
 
     all_violations: List[Dict[str, Any]] = []
