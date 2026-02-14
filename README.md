@@ -188,6 +188,15 @@ for config in easy baseline hard; do
 done
 ```
 
+Quick script version:
+
+```bash
+bash scripts/run_easy_baseline_hard.sh 2025 1500 results/repro_runs
+bash scripts/summarize_all.sh results/repro_runs results/summary_all
+```
+
+See `docs/REPRO.md` for full pipeline details.
+
 ---
 
 ## 📁 Project structure (current)
