@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multiplex-terror-network-gnn"
+version = "0.1.0"
+description = "Synthetic multiplex terror network generator and ontology-aware GNN baselines"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26,<2.1",
+  "pandas>=2.2,<2.4",
+  "scikit-learn>=1.4,<1.7",
+  "matplotlib>=3.8,<3.11",
+  "networkx>=3.3,<3.5",
+  "pydantic>=1.10,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "black>=24.8,<26",
+  "isort>=5.13,<7",
+  "mypy>=1.11,<2",
+  "pre-commit>=3.8,<5",
+  "pytest>=8,<10",
+  "ruff>=0.6.9,<1",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+src_paths = ["src", "tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+exclude = [
+  "data",
+  "results",
+  "notebooks",
+  "src/data",
+  "src/models",
+  "src/analysis",
+  "src/run_all.py",
+  "tests",
+]
+
+[tool.ruff.lint]
+select = ["I"]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src"]
+ignore_missing_imports = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disable_error_code = ["arg-type", "operator", "union-attr"]
+exclude = ["^data/", "^results/", "^notebooks/", "^src/data/", "^src/models/", "^src/analysis/"]
