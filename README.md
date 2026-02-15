@@ -226,7 +226,7 @@ bash scripts/summarize_all.sh results/repro_runs results/summary_all
 
 See `docs/REPRO.md` for full pipeline details.
 
-Korean local/Colab command runbook: `docs/COLAB_LOCAL_RUNBOOK_KO.md`
+Local/Colab command runbook: `docs/COLAB_LOCAL_RUNBOOK.md`
 
 ---
 
