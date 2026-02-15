@@ -145,7 +145,41 @@ pip install -r requirements.lock
 
 > PyTorch/PyG requires environment-specific installation (CPU/CUDA/Colab). See `docs/INSTALL.md` for platform-specific setup recipes.
 
-### End-to-end pipeline
+### Core pipeline workflow (step-by-step)
+
+1) **Generate multiplex data**
+```bash
+python -m src.data.multiplex_generator_v3 \
+  --config configs/generator_baseline.json \
+  --size 1500 \
+  --seed 2025 \
+  --out_path data/multiplex_baseline/multiplex.json
+```
+
+2) **Validate ontology conformance**
+```bash
+python -m src.cli.validate_ontology \
+  --manifest data/multiplex_baseline/multiplex.json \
+  --ontology ontology/terror.ttl \
+  --shapes ontology/constraints.shacl.ttl \
+  --json
+```
+
+3) **Build PyG dataset**
+```bash
+python -m src.data.build_pyg_dataset_v3 \
+  --manifest data/multiplex_baseline/multiplex.json \
+  --out_path data/multiplex_baseline/pyg_data.pt
+```
+
+4) **Run diagnostics**
+```bash
+python -m src.data.basic_diagnostics_v3 \
+  --manifest data/multiplex_baseline/multiplex.json \
+  --out_dir data/analysis/multiplex_baseline
+```
+
+### End-to-end runner (`run_all`)
 ```bash
 python -m src.run_all \
   --config configs/generator_baseline.json \
@@ -154,23 +188,23 @@ python -m src.run_all \
   --out_root results
 ```
 
-### Ontology mode example
+### Ontology mode examples
 ```bash
-python -m src.run_all \
-  --config configs/generator_baseline.json \
-  --size 800 \
-  --seed 2025 \
-  --out_root results \
-  --ontology_mode constrained
+# strict (default)
+python -m src.run_all --config configs/generator_baseline.json --size 1500 --seed 2025 --out_root results --ontology_mode strict
+
+# constrained (retry-to-conform)
+python -m src.run_all --config configs/generator_baseline.json --size 800 --seed 2025 --out_root results --ontology_mode constrained
+
+# report_only (continue and keep artifacts)
+python -m src.run_all --config configs/generator_baseline.json --size 800 --seed 2025 --out_root results --ontology_mode report_only
 ```
 
-### Ontology validation only
+### Training quick commands
 ```bash
-python -m src.cli.validate_ontology \
-  --manifest data/multiplex_baseline/multiplex.json \
-  --ontology ontology/terror.ttl \
-  --shapes ontology/constraints.shacl.ttl \
-  --json
+python -m src.models.train_hvt_gnn_v3 --data data/multiplex_baseline/pyg_data.pt --out_dir data/multiplex_baseline
+python -m src.models.train_multitask_gnn_v3 --data data/multiplex_baseline/pyg_data.pt --out_dir data/multiplex_baseline
+python -m src.models.train_linkpred_layer_v3 --data data/multiplex_baseline/pyg_data.pt --layer finance --neg_mode uniform --out_dir data/multiplex_baseline
 ```
 
 ### Unified CLI (editable install)
@@ -250,7 +284,8 @@ multiplex-terror-network-gnn/
 ├── docs/
 │   ├── INSTALL.md
 │   ├── ONTOLOGY_CONTRACT.md
-│   └── REPRO.md
+│   ├── REPRO.md
+│   └── COLAB_LOCAL_RUNBOOK.md
 ├── src/
 │   ├── run_all.py
 │   ├── cli/{main.py,validate_ontology.py}
