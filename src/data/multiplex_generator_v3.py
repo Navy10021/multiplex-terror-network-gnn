@@ -979,6 +979,8 @@ def apply_edge_observation_noise(
     obs_scores: Optional[np.ndarray] = None,
     missing_bias_strength: float = 0.0,
     false_bias_gamma: float = 0.0,
+    allowed_false_sources: Optional[set[int]] = None,
+    allowed_false_targets: Optional[set[int]] = None,
 ) -> Tuple[List[Edge], Dict[Tuple[int, int], int]]:
     """Return (noised_edges, false_edge_flags).
 
@@ -1069,6 +1071,10 @@ def apply_edge_observation_noise(
             k = _key(u, v)
             if k[0] == k[1]:
                 continue
+            if allowed_false_sources is not None and int(k[0]) not in allowed_false_sources:
+                continue
+            if allowed_false_targets is not None and int(k[1]) not in allowed_false_targets:
+                continue
             if k in kept_set or k in false_flags:
                 continue
             false_flags[k] = 1
@@ -1078,6 +1084,34 @@ def apply_edge_observation_noise(
     out_edges.extend([Edge(source=int(k[0]), target=int(k[1])) for k in false_flags.keys()])
 
     return out_edges, false_flags
+
+
+def filter_edges_by_role_constraints(
+    edges: List[Edge],
+    role_by_id: Dict[int, str],
+    allowed_source_roles: set[str],
+    allowed_target_roles: Optional[set[str]] = None,
+    directed: bool = True,
+    false_flags: Optional[Dict[Tuple[int, int], int]] = None,
+) -> Tuple[List[Edge], Optional[Dict[Tuple[int, int], int]]]:
+    filtered: List[Edge] = []
+    filtered_false: Optional[Dict[Tuple[int, int], int]] = {} if false_flags is not None else None
+
+    for e in edges:
+        k = _edge_key(int(e.source), int(e.target), directed=directed)
+        src_role = role_by_id.get(int(k[0]))
+        dst_role = role_by_id.get(int(k[1]))
+
+        if src_role not in allowed_source_roles:
+            continue
+        if allowed_target_roles is not None and dst_role not in allowed_target_roles:
+            continue
+
+        filtered.append(Edge(source=int(k[0]), target=int(k[1])))
+        if filtered_false is not None and false_flags is not None and k in false_flags:
+            filtered_false[k] = 1
+
+    return filtered, filtered_false
 
 def _make_campaign_windows(cfg: GeneratorConfig) -> List[Tuple[int, int]]:
     # windows represented as (center, half_length)
@@ -1308,6 +1342,16 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
         nd.observability = float(obs_scores[i]) if i < len(obs_scores) else 1.0
         nd.activity_rate = float(activity_rates[i]) if i < len(activity_rates) else 1.0
 
+    role_by_id: Dict[int, str] = {n.id: n.role for n in nodes}
+    hierarchy_allowed_src = {"leader", "financier", "operative"}
+    hierarchy_allowed_dst = {"leader", "financier", "courier", "operative", "support"}
+    finance_allowed_src = {"leader", "financier"}
+    finance_allowed_dst = {"leader", "financier", "courier", "operative", "support"}
+    hierarchy_allowed_src_ids = {nid for nid, role in role_by_id.items() if role in hierarchy_allowed_src}
+    hierarchy_allowed_dst_ids = {nid for nid, role in role_by_id.items() if role in hierarchy_allowed_dst}
+    finance_allowed_src_ids = {nid for nid, role in role_by_id.items() if role in finance_allowed_src}
+    finance_allowed_dst_ids = {nid for nid, role in role_by_id.items() if role in finance_allowed_dst}
+
     # --------------------------------------------------
     # 1) base layers
     # --------------------------------------------------
@@ -1369,6 +1413,22 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
     operation_edges = layer_edges["operation"]
     ideology_edges = layer_edges["ideology"]
 
+    # Enforce ontology role compatibility after optional cross-layer copy.
+    hierarchy_edges, _ = filter_edges_by_role_constraints(
+        hierarchy_edges,
+        role_by_id=role_by_id,
+        allowed_source_roles=hierarchy_allowed_src,
+        allowed_target_roles=hierarchy_allowed_dst,
+        directed=True,
+    )
+    finance_edges, _ = filter_edges_by_role_constraints(
+        finance_edges,
+        role_by_id=role_by_id,
+        allowed_source_roles=finance_allowed_src,
+        allowed_target_roles=finance_allowed_dst,
+        directed=True,
+    )
+
     # --------------------------------------------------
     # 2) observation noise (optional; per-layer rates)
     # --------------------------------------------------
@@ -1385,6 +1445,8 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
         obs_scores=obs_for_noise,
         missing_bias_strength=miss_bias,
         false_bias_gamma=false_gamma,
+        allowed_false_sources=hierarchy_allowed_src_ids,
+        allowed_false_targets=hierarchy_allowed_dst_ids,
     )
 
     finance_edges, false_fin = apply_edge_observation_noise(
@@ -1396,6 +1458,8 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
         obs_scores=obs_for_noise,
         missing_bias_strength=miss_bias,
         false_bias_gamma=false_gamma,
+        allowed_false_sources=finance_allowed_src_ids,
+        allowed_false_targets=finance_allowed_dst_ids,
     )
 
     communication_edges, false_comm = apply_edge_observation_noise(
@@ -1429,6 +1493,24 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
         obs_scores=obs_for_noise,
         missing_bias_strength=miss_bias,
         false_bias_gamma=false_gamma,
+    )
+
+    # Re-apply constraints because false-edge injection can introduce invalid role pairings.
+    hierarchy_edges, false_hier = filter_edges_by_role_constraints(
+        hierarchy_edges,
+        role_by_id=role_by_id,
+        allowed_source_roles=hierarchy_allowed_src,
+        allowed_target_roles=hierarchy_allowed_dst,
+        directed=True,
+        false_flags=false_hier,
+    )
+    finance_edges, false_fin = filter_edges_by_role_constraints(
+        finance_edges,
+        role_by_id=role_by_id,
+        allowed_source_roles=finance_allowed_src,
+        allowed_target_roles=finance_allowed_dst,
+        directed=True,
+        false_flags=false_fin,
     )
 
     # --------------------------------------------------
@@ -1483,6 +1565,15 @@ def generate_multiplex_with_config(cfg: GeneratorConfig) -> Dict[str, Any]:
     for e in finance_edges:
         k = _k(e.source, e.target, directed=True)
         st = txn_stats.get(k, {"txn_count": 0.0, "txn_amount_sum": 0.0, "txn_amount_max": 0.0, "txn_amount_mean": 0.0})
+        if float(st.get("txn_amount_sum", 0.0)) <= 0.0:
+            # Keep ontology-consistent finance attributes even when all events were dropped
+            # (e.g., due to activity gating or missing-event noise).
+            st = {
+                "txn_count": max(1.0, float(st.get("txn_count", 0.0))),
+                "txn_amount_sum": 1.0,
+                "txn_amount_max": 1.0,
+                "txn_amount_mean": 1.0,
+            }
         d = {"source": int(k[0]), "target": int(k[1]), **{kk: float(vv) for kk, vv in st.items()}}
         d["is_false"] = int(k in false_fin)
         d["copied_from"] = copy_provenance.get("finance", {}).get(k)
