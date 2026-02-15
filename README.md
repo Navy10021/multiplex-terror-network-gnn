@@ -134,6 +134,8 @@ Representative script:
 
 ## 🚀 Quick start
 
+> For a full Colab/local command reference (including smoke checks), see `docs/COLAB_LOCAL_RUNBOOK.md`.
+
 ### Installation
 ```bash
 git clone https://github.com/Navy10021/multiplex-terror-network-gnn.git
@@ -205,6 +207,15 @@ python -m src.run_all --config configs/generator_baseline.json --size 800 --seed
 python -m src.models.train_hvt_gnn_v3 --data data/multiplex_baseline/pyg_data.pt --out_dir data/multiplex_baseline
 python -m src.models.train_multitask_gnn_v3 --data data/multiplex_baseline/pyg_data.pt --out_dir data/multiplex_baseline
 python -m src.models.train_linkpred_layer_v3 --data data/multiplex_baseline/pyg_data.pt --layer finance --neg_mode uniform --out_dir data/multiplex_baseline
+```
+
+### Visualization & summary quick commands
+```bash
+python -m src.analysis.plot_multitask_linkpred_summary \
+  --run_dirs results/run_* \
+  --out_dir results/summary_all
+
+bash scripts/summarize_all.sh results/repro_runs results/summary_all
 ```
 
 ### Unified CLI (editable install)
