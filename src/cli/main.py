@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Unified CLI entrypoint for multiplex-terror-network-gnn."""
+
 import subprocess
 import sys
 
@@ -10,6 +12,7 @@ COMMANDS = {
 
 
 def main() -> int:
+    """Dispatch subcommands to module-level CLIs."""
     argv = sys.argv[1:]
     if not argv or argv[0] in {"-h", "--help"}:
         print("usage: multiplex-gnn {run-all,validate-ontology} [args...]")
