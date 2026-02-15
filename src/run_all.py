@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""End-to-end runner for data generation, validation, and reporting artifacts."""
+
 import argparse
 import json
 import os
@@ -40,6 +42,7 @@ from src.validation.schema import Manifest, validate_manifest_dict
 
 
 def _safe_int(x: Any, default: int = -1) -> int:
+    """Safely coerce ``x`` to ``int`` with a default fallback."""
     try:
         return int(x)
     except Exception:
@@ -47,6 +50,7 @@ def _safe_int(x: Any, default: int = -1) -> int:
 
 
 def _safe_float(x: Any, default: float = 0.0) -> float:
+    """Safely coerce ``x`` to ``float`` with a default fallback."""
     try:
         return float(x)
     except Exception:
@@ -54,6 +58,7 @@ def _safe_float(x: Any, default: float = 0.0) -> float:
 
 
 def _build_node_maps(manifest: Dict[str, Any]) -> Dict[str, Dict[int, Any]]:
+    """Build frequently used node lookup maps from a manifest dictionary."""
     nodes = manifest.get("nodes", []) if isinstance(manifest.get("nodes"), list) else []
     node_attrs: Dict[int, Dict[str, Any]] = {}
     for n in nodes:
@@ -70,11 +75,18 @@ def _compute_rule_scores(
     target_violations: List[Dict[str, Any]],
     global_report: Dict[str, Any],
 ) -> Dict[str, Any]:
-    constraints = global_report.get("constraints_checked", []) if isinstance(global_report.get("constraints_checked"), list) else []
-    violated_checks = sorted(list({str(v.get("check")) for v in target_violations if v.get("check") is not None}))
+    """Summarize rule consistency score for a specific target entity."""
+    constraints = (
+        global_report.get("constraints_checked", [])
+        if isinstance(global_report.get("constraints_checked"), list)
+        else []
+    )
+    violated_checks = sorted(
+        list({str(v.get("check")) for v in target_violations if v.get("check") is not None})
+    )
     satisfied_checks = [c for c in constraints if c not in violated_checks]
 
-    # heuristic rule score: fewer target violations => higher rule consistency
+    # Heuristic score: fewer target-level violations implies higher consistency.
     denom = max(1.0, float(len(constraints) if constraints else 3))
     rule_score = max(0.0, 1.0 - (float(len(violated_checks)) / denom))
     return {
@@ -84,15 +96,17 @@ def _compute_rule_scores(
     }
 
 
-def _compute_model_proxy(node: Dict[str, Any], local_degree: int, max_degree: int) -> Dict[str, Any]:
-    # F2: still proxy-based, but now multi-signal and explicit.
+def _compute_model_proxy(
+    node: Dict[str, Any], local_degree: int, max_degree: int
+) -> Dict[str, Any]:
+    """Compute a lightweight node-level proxy score from manifest-only signals."""
     imp = _safe_float(node.get("importance_score", 0.0), default=0.0)
     hvt_flag = 1.0 if bool(node.get("high_value_target", 0)) else 0.0
     skill = _safe_float(node.get("skill_level", 0.0), default=0.0)
     rad = _safe_float(node.get("radicalization", 0.0), default=0.0)
 
     deg_norm = float(local_degree) / float(max(1, max_degree))
-    # bounded to [0,1] with lightweight normalization
+    # Normalize each component to keep the aggregate score in [0, 1].
     imp_norm = max(0.0, min(1.0, imp / 100.0))
     skill_norm = max(0.0, min(1.0, skill))
     rad_norm = max(0.0, min(1.0, rad))
@@ -112,17 +126,25 @@ def _compute_model_proxy(node: Dict[str, Any], local_degree: int, max_degree: in
         "proxy_probability": float(model_prob),
     }
 
-def _build_node_explanations(manifest: Dict[str, Any], ontology_report: Dict[str, Any], top_k: int = 25) -> List[Dict[str, Any]]:
+
+def _build_node_explanations(
+    manifest: Dict[str, Any], ontology_report: Dict[str, Any], top_k: int = 25
+) -> List[Dict[str, Any]]:
+    """Build explanation bundles for top-degree nodes."""
     nodes = manifest.get("nodes", []) if isinstance(manifest.get("nodes"), list) else []
     layers = manifest.get("layers", {}) if isinstance(manifest.get("layers"), dict) else {}
-    violations = ontology_report.get("violations", []) if isinstance(ontology_report.get("violations"), list) else []
+    violations = (
+        ontology_report.get("violations", [])
+        if isinstance(ontology_report.get("violations"), list)
+        else []
+    )
 
     degree: Dict[int, int] = {}
     neighbors: Dict[int, set] = {}
     for layer_obj in layers.values():
         if not isinstance(layer_obj, dict):
             continue
-        for e in (layer_obj.get("edges", []) or []):
+        for e in layer_obj.get("edges", []) or []:
             u = _safe_int(e.get("source"), default=-1)
             v = _safe_int(e.get("target"), default=-1)
             if u < 0 or v < 0:
@@ -141,19 +163,25 @@ def _build_node_explanations(manifest: Dict[str, Any], ontology_report: Dict[str
             nid = _safe_int(aid, default=-1)
             if nid < 0:
                 continue
-            node_viol.setdefault(nid, []).append({
-                "check": v.get("check"),
-                "rule_id": v.get("rule_id"),
-                "severity": v.get("severity", "error"),
-                "message": v.get("message", ""),
-            })
+            node_viol.setdefault(nid, []).append(
+                {
+                    "check": v.get("check"),
+                    "rule_id": v.get("rule_id"),
+                    "severity": v.get("severity", "error"),
+                    "message": v.get("message", ""),
+                }
+            )
 
     maps = _build_node_maps(manifest)
     node_attrs = maps["node_attrs"]
     max_degree = max(degree.values()) if degree else 1
 
-    ranked = sorted(nodes, key=lambda n: degree.get(_safe_int(n.get("id", n.get("node_id", -1)), default=-1), 0), reverse=True)
-    selected = ranked[:max(1, int(top_k))]
+    ranked = sorted(
+        nodes,
+        key=lambda n: degree.get(_safe_int(n.get("id", n.get("node_id", -1)), default=-1), 0),
+        reverse=True,
+    )
+    selected = ranked[: max(1, int(top_k))]
     out: List[Dict[str, Any]] = []
     for n in selected:
         nid = _safe_int(n.get("id", n.get("node_id", -1)), default=-1)
@@ -163,45 +191,54 @@ def _build_node_explanations(manifest: Dict[str, Any], ontology_report: Dict[str
         nv = node_viol.get(nid, [])
         node_obj = node_attrs.get(nid, n)
 
-        model_proxy = _compute_model_proxy(node_obj, local_degree=int(degree.get(nid, 0)), max_degree=max_degree)
+        model_proxy = _compute_model_proxy(
+            node_obj, local_degree=int(degree.get(nid, 0)), max_degree=max_degree
+        )
         rule_bundle = _compute_rule_scores(nv, ontology_report)
-        confidence_alignment = 1.0 - abs(float(model_proxy["proxy_probability"]) - float(rule_bundle["rule_score"]))
+        confidence_alignment = 1.0 - abs(
+            float(model_proxy["proxy_probability"]) - float(rule_bundle["rule_score"])
+        )
         confidence_alignment = max(0.0, min(1.0, confidence_alignment))
 
-        out.append({
-            "target": nid,
-            "task": "hvt_risk_screening",
-            "model_evidence": {
-                "proxy_source": "manifest_signals",
-                "local_degree": int(degree.get(nid, 0)),
-                "top_neighbors": neigh,
-                **model_proxy,
-            },
-            "ontology_evidence": {
-                "conforms_global": bool(ontology_report.get("conforms", False)),
-                "violations_for_target": nv,
-                "violation_count_for_target": len(nv),
-                "rule_chains": {
-                    "violated": rule_bundle["violated_checks"],
-                    "satisfied": rule_bundle["satisfied_checks"],
+        out.append(
+            {
+                "target": nid,
+                "task": "hvt_risk_screening",
+                "model_evidence": {
+                    "proxy_source": "manifest_signals",
+                    "local_degree": int(degree.get(nid, 0)),
+                    "top_neighbors": neigh,
+                    **model_proxy,
                 },
-                "rule_score": float(rule_bundle["rule_score"]),
-            },
-            "confidence_alignment": {
-                "model_proxy_probability": float(model_proxy["proxy_probability"]),
-                "rule_score": float(rule_bundle["rule_score"]),
-                "alignment_score": float(confidence_alignment),
-            },
-            "conflict_flags": {
-                "rule_violation_for_target": bool(nv),
-                "global_nonconformance": not bool(ontology_report.get("conforms", False)),
-                "model_rule_mismatch": bool(confidence_alignment < 0.5),
-            },
-        })
+                "ontology_evidence": {
+                    "conforms_global": bool(ontology_report.get("conforms", False)),
+                    "violations_for_target": nv,
+                    "violation_count_for_target": len(nv),
+                    "rule_chains": {
+                        "violated": rule_bundle["violated_checks"],
+                        "satisfied": rule_bundle["satisfied_checks"],
+                    },
+                    "rule_score": float(rule_bundle["rule_score"]),
+                },
+                "confidence_alignment": {
+                    "model_proxy_probability": float(model_proxy["proxy_probability"]),
+                    "rule_score": float(rule_bundle["rule_score"]),
+                    "alignment_score": float(confidence_alignment),
+                },
+                "conflict_flags": {
+                    "rule_violation_for_target": bool(nv),
+                    "global_nonconformance": not bool(ontology_report.get("conforms", False)),
+                    "model_rule_mismatch": bool(confidence_alignment < 0.5),
+                },
+            }
+        )
     return out
 
 
-def _write_explanations(run_dir: str, manifest: Dict[str, Any], ontology_report: Dict[str, Any], top_k: int = 25) -> str:
+def _write_explanations(
+    run_dir: str, manifest: Dict[str, Any], ontology_report: Dict[str, Any], top_k: int = 25
+) -> str:
+    """Write node explanations to JSON and return the output path."""
     out_dir = os.path.join(run_dir, "explanations")
     os.makedirs(out_dir, exist_ok=True)
     exps = _build_node_explanations(manifest, ontology_report, top_k=top_k)
@@ -212,6 +249,7 @@ def _write_explanations(run_dir: str, manifest: Dict[str, Any], ontology_report:
 
 
 def _run_reporting_summary(run_dir: str) -> str:
+    """Generate a per-run summary CSV for multitask/link prediction metrics."""
     out_dir = os.path.join(run_dir, "reporting_summary")
     os.makedirs(out_dir, exist_ok=True)
     df = build_runs_dataframe([run_dir], difficulty_mode="auto")
@@ -220,12 +258,19 @@ def _run_reporting_summary(run_dir: str) -> str:
     return csv_path
 
 
-
-
 def _summarize_ontology_violations(ontology_report: Dict[str, Any], top_k: int = 3) -> str:
-    by_check_raw = ontology_report.get("violations_by_check") if isinstance(ontology_report.get("violations_by_check"), dict) else {}
+    """Return a concise ontology-violation summary string for logs/errors."""
+    by_check_raw = (
+        ontology_report.get("violations_by_check")
+        if isinstance(ontology_report.get("violations_by_check"), dict)
+        else {}
+    )
     if not by_check_raw:
-        errs = ontology_report.get("errors_by_check") if isinstance(ontology_report.get("errors_by_check"), dict) else {}
+        errs = (
+            ontology_report.get("errors_by_check")
+            if isinstance(ontology_report.get("errors_by_check"), dict)
+            else {}
+        )
         by_check_raw = errs
 
     by_check: Dict[str, int] = {}
@@ -243,7 +288,7 @@ def _summarize_ontology_violations(ontology_report: Dict[str, Any], top_k: int =
         return f"violations_total={total}" if total > 0 else "no structured violations"
 
     ranked = sorted(by_check.items(), key=lambda kv: int(kv[1]), reverse=True)
-    head = ranked[:max(1, int(top_k))]
+    head = ranked[: max(1, int(top_k))]
     parts = [f"{k}:{int(v)}" for k, v in head]
     total = int(sum(int(v) for _, v in ranked))
     return f"top_checks=({', '.join(parts)}) total={total}"
@@ -267,8 +312,6 @@ def _resolve_ontology_mode(args: argparse.Namespace) -> tuple[bool, bool]:
     return True, False
 
 
-
-
 def _load_retry_policy_from_config(config_path: str) -> Dict[str, Any]:
     """Load ontology retry policy from generator config JSON when present."""
     try:
@@ -281,16 +324,20 @@ def _load_retry_policy_from_config(config_path: str) -> Dict[str, Any]:
 
 
 def _parse_csv_list(value: Optional[str]) -> List[str]:
+    """Parse a comma-separated CLI argument into a trimmed list."""
     if not value:
         return []
     return [v.strip() for v in str(value).split(",") if v.strip()]
 
+
 def _write_manifest(manifest: Dict, path: str) -> None:
+    """Write a manifest dictionary to disk as UTF-8 JSON."""
     with open(path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
 
 
 def _run_diagnostics(manifest_path: str, out_dir: str) -> None:
+    """Execute all diagnostics modules for a generated manifest."""
     ensure_dir(out_dir)
     mani, nodes, labels, layers, df_events = load_multiplex(manifest_path)
     print_meta(mani)
@@ -302,7 +349,9 @@ def _run_diagnostics(manifest_path: str, out_dir: str) -> None:
     ensure_dir(layer_overlap_dir)
     layer_overlap_diagnostics(layers, out_dir=layer_overlap_dir)
     edge_noise_diagnostics(layers, out_dir=os.path.join(out_dir, "6_edge_noise"))
-    false_edge_observability_diagnostics(labels, layers, out_dir=os.path.join(out_dir, "6b_false_edge_obs"))
+    false_edge_observability_diagnostics(
+        labels, layers, out_dir=os.path.join(out_dir, "6b_false_edge_obs")
+    )
     copy_provenance_diagnostics(mani, layers, out_dir=os.path.join(out_dir, "6c_copy"))
     edge_attribute_diagnostics(layers, out_dir=os.path.join(out_dir, "7_edge_attr"))
     operation_cell_purity(labels, out_dir=os.path.join(out_dir, "8_op_cells"))
@@ -310,29 +359,87 @@ def _run_diagnostics(manifest_path: str, out_dir: str) -> None:
     label_diagnostics(labels, out_dir=os.path.join(out_dir, "5_labels"))
 
 
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="End-to-end runner: generate → build → diagnostics")
+    parser = argparse.ArgumentParser(
+        description="End-to-end runner: generate → build → diagnostics"
+    )
     parser.add_argument("--config", type=str, required=True, help="Generator config JSON")
     parser.add_argument("--size", type=int, default=1500, help="Number of nodes")
     parser.add_argument("--seed", type=int, default=2025, help="Random seed")
     parser.add_argument("--out_root", type=str, default="results", help="Root folder for runs")
     parser.add_argument("--skip_diagnostics", action="store_true", help="Skip diagnostics stage")
     parser.add_argument("--skip_build", action="store_true", help="Skip PyG dataset build stage")
-    parser.add_argument("--ontology", type=str, default="ontology/terror.ttl", help="Ontology TTL path")
-    parser.add_argument("--shapes", type=str, default="ontology/constraints.shacl.ttl", help="SHACL constraints path")
-    parser.add_argument("--no_ontology_strict", action="store_true", help="Do not fail run on ontology-rule violations")
-    parser.add_argument("--ontology_mode", type=str, default="strict", choices=["strict", "constrained", "report_only"],
-                        help="Ontology run preset: strict (default), constrained (retry-to-conform), report_only (non-strict validation). Legacy flags still supported and override this preset.")
-    parser.add_argument("--ontology_constrained", action="store_true", help="Retry generation with shifted seeds until ontology validation conforms")
-    parser.add_argument("--ontology_max_retries", type=int, default=3, help="Max generation attempts in ontology_constrained mode")
-    parser.add_argument("--ontology_retry_seed_stride", type=int, default=1, help="Seed increment per attempt in ontology_constrained mode")
-    parser.add_argument("--ontology_retry_rule_ids", type=str, default="", help="Comma-separated rule_ids that are eligible for constrained retry (empty: any error rule)")
-    parser.add_argument("--ontology_retry_severities", type=str, default="error,critical", help="Comma-separated severities eligible for retry")
-    parser.add_argument("--ontology_constrained_fallback_report_only", action="store_true", help="When constrained retries fail, continue in report_only mode and keep artifacts instead of failing")
-    parser.add_argument("--run_reporting_summary", action="store_true", help="Write ontology-aware reporting summary CSV for this run")
-    parser.add_argument("--write_explanations", action="store_true", help="Write node-level ontology explanation artifacts")
-    parser.add_argument("--explanations_top_k", type=int, default=25, help="Number of top-degree nodes to include in explanations")
+    parser.add_argument(
+        "--ontology", type=str, default="ontology/terror.ttl", help="Ontology TTL path"
+    )
+    parser.add_argument(
+        "--shapes",
+        type=str,
+        default="ontology/constraints.shacl.ttl",
+        help="SHACL constraints path",
+    )
+    parser.add_argument(
+        "--no_ontology_strict",
+        action="store_true",
+        help="Do not fail run on ontology-rule violations",
+    )
+    parser.add_argument(
+        "--ontology_mode",
+        type=str,
+        default="strict",
+        choices=["strict", "constrained", "report_only"],
+        help="Ontology run preset: strict (default), constrained (retry-to-conform), report_only (non-strict validation). Legacy flags still supported and override this preset.",
+    )
+    parser.add_argument(
+        "--ontology_constrained",
+        action="store_true",
+        help="Retry generation with shifted seeds until ontology validation conforms",
+    )
+    parser.add_argument(
+        "--ontology_max_retries",
+        type=int,
+        default=3,
+        help="Max generation attempts in ontology_constrained mode",
+    )
+    parser.add_argument(
+        "--ontology_retry_seed_stride",
+        type=int,
+        default=1,
+        help="Seed increment per attempt in ontology_constrained mode",
+    )
+    parser.add_argument(
+        "--ontology_retry_rule_ids",
+        type=str,
+        default="",
+        help="Comma-separated rule_ids that are eligible for constrained retry (empty: any error rule)",
+    )
+    parser.add_argument(
+        "--ontology_retry_severities",
+        type=str,
+        default="error,critical",
+        help="Comma-separated severities eligible for retry",
+    )
+    parser.add_argument(
+        "--ontology_constrained_fallback_report_only",
+        action="store_true",
+        help="When constrained retries fail, continue in report_only mode and keep artifacts instead of failing",
+    )
+    parser.add_argument(
+        "--run_reporting_summary",
+        action="store_true",
+        help="Write ontology-aware reporting summary CSV for this run",
+    )
+    parser.add_argument(
+        "--write_explanations",
+        action="store_true",
+        help="Write node-level ontology explanation artifacts",
+    )
+    parser.add_argument(
+        "--explanations_top_k",
+        type=int,
+        default=25,
+        help="Number of top-degree nodes to include in explanations",
+    )
     args = parser.parse_args()
 
     strict_mode, constrained_mode = _resolve_ontology_mode(args)
@@ -346,11 +453,23 @@ def main() -> None:
     config_retry_policy = _load_retry_policy_from_config(args.config)
     retry_max = int(config_retry_policy.get("max_retries", args.ontology_max_retries))
     retry_stride = int(config_retry_policy.get("seed_stride", args.ontology_retry_seed_stride))
-    retry_rule_ids = _parse_csv_list(args.ontology_retry_rule_ids) or list(config_retry_policy.get("retry_rule_ids", []) or [])
-    retry_severities = _parse_csv_list(args.ontology_retry_severities) or list(config_retry_policy.get("retry_severities", ["error", "critical"]) or ["error", "critical"])
-    fallback_report_only = bool(config_retry_policy.get("fallback_report_only", args.ontology_constrained_fallback_report_only))
+    retry_rule_ids = _parse_csv_list(args.ontology_retry_rule_ids) or list(
+        config_retry_policy.get("retry_rule_ids", []) or []
+    )
+    retry_severities = _parse_csv_list(args.ontology_retry_severities) or list(
+        config_retry_policy.get("retry_severities", ["error", "critical"]) or ["error", "critical"]
+    )
+    fallback_report_only = bool(
+        config_retry_policy.get(
+            "fallback_report_only", args.ontology_constrained_fallback_report_only
+        )
+    )
 
-    ontology_telemetry = {"mode": "constrained" if constrained_mode else "single_pass", "attempts": 1, "failed_attempts": 0}
+    ontology_telemetry = {
+        "mode": "constrained" if constrained_mode else "single_pass",
+        "attempts": 1,
+        "failed_attempts": 0,
+    }
     if constrained_mode:
         manifest, ontology_report, ontology_telemetry = generate_with_ontology_constraints(
             cfg=cfg,
@@ -362,7 +481,9 @@ def main() -> None:
             retry_on_severities=retry_severities,
         )
         if ontology_report.get("conforms", False):
-            print(f"[*] Ontology-constrained generation passed at attempt {ontology_telemetry.get('successful_attempt')}")
+            print(
+                f"[*] Ontology-constrained generation passed at attempt {ontology_telemetry.get('successful_attempt')}"
+            )
         else:
             msg = "ontology-constrained generation exhausted retries without conformance"
             if strict_mode and not fallback_report_only:
@@ -384,7 +505,13 @@ def main() -> None:
             print("[*] Ontology validation passed")
         elif strict_mode:
             summary = _summarize_ontology_violations(ontology_report)
-            raise OntologyValidationError("ontology validation failed: " + "; ".join(ontology_report.get("errors", [])) + " | " + summary + " | hint: use --ontology_mode report_only (or --no_ontology_strict) to continue with reports only, or --ontology_mode constrained (or --ontology_constrained) to retry generation")
+            raise OntologyValidationError(
+                "ontology validation failed: "
+                + "; ".join(ontology_report.get("errors", []))
+                + " | "
+                + summary
+                + " | hint: use --ontology_mode report_only (or --no_ontology_strict) to continue with reports only, or --ontology_mode constrained (or --ontology_constrained) to retry generation"
+            )
         else:
             summary = _summarize_ontology_violations(ontology_report)
             print(f"[!] Ontology validation warning (strict disabled): {summary}")
@@ -418,7 +545,9 @@ def main() -> None:
 
     explanation_path: Optional[str] = None
     if args.write_explanations:
-        explanation_path = _write_explanations(run_dir, manifest, ontology_report, top_k=args.explanations_top_k)
+        explanation_path = _write_explanations(
+            run_dir, manifest, ontology_report, top_k=args.explanations_top_k
+        )
         print(f"[*] Wrote ontology explanations: {explanation_path}")
 
     reporting_summary_csv: Optional[str] = None
@@ -439,10 +568,16 @@ def main() -> None:
             "ontology_generation_telemetry": ontology_telemetry,
             "ontology_retry_log": ontology_telemetry.get("retry_log", []),
             "ontology_retry_policy": ontology_telemetry.get("retry_policy", {}),
-            "ontology_mode_resolved": "constrained" if constrained_mode else ("strict" if strict_mode else "report_only"),
+            "ontology_mode_resolved": (
+                "constrained" if constrained_mode else ("strict" if strict_mode else "report_only")
+            ),
             "ontology_strict_mode": bool(strict_mode),
-            "ontology_explanations": os.path.abspath(explanation_path) if explanation_path else None,
-            "reporting_summary_csv": os.path.abspath(reporting_summary_csv) if reporting_summary_csv else None,
+            "ontology_explanations": (
+                os.path.abspath(explanation_path) if explanation_path else None
+            ),
+            "reporting_summary_csv": (
+                os.path.abspath(reporting_summary_csv) if reporting_summary_csv else None
+            ),
         },
     )
     meta_path = write_run_metadata(run_dir, metadata)

@@ -143,7 +143,7 @@ source .venv/bin/activate
 pip install -r requirements.lock
 ```
 
-> PyTorch/PyG는 환경(CPU/CUDA/Colab)별로 별도 설치가 필요합니다. `docs/INSTALL.md` 설치 레시피를 먼저 확인하세요.
+> PyTorch/PyG requires environment-specific installation (CPU/CUDA/Colab). See `docs/INSTALL.md` for platform-specific setup recipes.
 
 ### End-to-end pipeline
 ```bash
@@ -226,7 +226,7 @@ bash scripts/summarize_all.sh results/repro_runs results/summary_all
 
 See `docs/REPRO.md` for full pipeline details.
 
-Korean local/Colab command runbook: `docs/COLAB_LOCAL_RUNBOOK_KO.md`
+Local/Colab command runbook: `docs/COLAB_LOCAL_RUNBOOK.md`
 
 ---
 
