@@ -1,7 +1,7 @@
 # CI Checklist (Reusable PR Gate)
 
-이 문서는 PR마다 반복 적용할 **최종 점검 기준**을 고정한 체크리스트다.
-CI는 `scripts/ci_checklist.sh`를 실행해 아래 기준을 자동 검증한다.
+This document defines the final quality gate that should be applied to every PR.
+CI runs `scripts/ci_checklist.sh` to enforce the checks below.
 
 ## 1) Static checks
 - [ ] `ruff check src tests`
@@ -18,13 +18,13 @@ CI는 `scripts/ci_checklist.sh`를 실행해 아래 기준을 자동 검증한�
 - [ ] `bash -n scripts/run_easy_baseline_hard.sh scripts/summarize_all.sh`
 
 ## 5) Docs alignment review (manual)
-- [ ] README Quick Start / CLI / Typical outputs가 현재 코드 동작과 일치
-- [ ] 새로 추가된 사용자-facing 기능이 docs에 반영
+- [ ] README Quick Start / CLI / Typical outputs match current code behavior.
+- [ ] Any new user-facing feature is documented.
 
 ---
 
 ## Notes
-- Torch/PyG는 환경 의존성이 크므로 설치 실패 시 CI 전체를 깨지 않도록 테스트는 `importorskip` 패턴을 사용한다.
-- 체크리스트 변경이 필요하면 `docs/CI_CHECKLIST.md`와 `scripts/ci_checklist.sh`를 함께 업데이트한다.
-- CI job은 `timeout-minutes: 20`, `pip --retries 1 --timeout 30`로 설정해 무한 대기/장기 재시도를 줄인다.
-- PR이 오래 대기하면 브랜치를 최신 `main`으로 rebase 후 다시 push해 mergeability 계산을 강제 갱신한다.
+- Torch/PyG has environment-specific installation behavior. Use `importorskip` for optional tests so CI does not fail due to missing GPU-specific dependencies.
+- If this checklist changes, update both `docs/CI_CHECKLIST.md` and `scripts/ci_checklist.sh`.
+- CI jobs should stay bounded (`timeout-minutes: 20`, `pip --retries 1 --timeout 30`) to avoid long hangs.
+- If mergeability looks stale on a long-lived PR, rebase onto latest `main` and push again.
